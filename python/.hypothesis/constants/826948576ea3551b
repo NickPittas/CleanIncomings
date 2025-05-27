@@ -1,0 +1,4 @@
+# file: G:\My Drive\python\CleanIncomings\python\fileops.py
+# hypothesis_version: 6.131.28
+
+[0.0, 100, '_progress', 'batchId', 'batch_id', 'completed', 'completedOperations', 'copy', 'currentFile', 'error', 'error_count', 'etaSeconds', 'failed', 'failedOperations', 'files', 'id', 'isCancelled', 'isPaused', 'move', 'name', 'node', 'operations_count', 'path', 'processedSize', 'progressPercentage', 'r', 'results', 'running', 'sequence', 'size', 'sourcePath', 'status', 'success', 'success_count', 'targetPath', 'totalOperations', 'totalSize', 'total_size', 'type', 'utf-8', 'w', 'warning']

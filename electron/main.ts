@@ -6,7 +6,18 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import * as http from 'http';
-import { startWebSocketServer, stopWebSocketServer, getWebSocketPort, sendProgressUpdate, getServerStatus } from './websocket-server';
+
+// Helper function to get resource paths that works in all environments
+function getResourcePath(relativePath: string): string {
+  if (isDev) {
+    return join(__dirname, '..', relativePath);
+  } else {
+    // @ts-ignore
+    // In production, resources would normally be in process.resourcesPath
+    // But since we're in Google Drive, we'll use a relative path approach
+    return join(app.getAppPath(), relativePath);
+  }
+}
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -48,9 +59,8 @@ async function createWindow(): Promise<void> {
 
   if (isDev) {
     let viteUrl = 'http://localhost:3001'; // Default fallback
-    
     try {
-      // Try to read the port from Vite's port file
+      // Read the port from Vite's port file
       const portFilePath = join(__dirname, '../.vite-port');
       if (existsSync(portFilePath)) {
         const portData = JSON.parse(readFileSync(portFilePath, 'utf8'));
@@ -59,7 +69,7 @@ async function createWindow(): Promise<void> {
         
         // Add small delay to ensure Vite is fully ready
         console.log('⏳ Waiting for Vite server to be ready...');
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        await new Promise(resolve => setTimeout(resolve, 2000));
       } else {
         console.log('📄 No .vite-port file found, using default port 3001');
         // Add delay even for default port
@@ -69,42 +79,85 @@ async function createWindow(): Promise<void> {
       console.error('❌ Error reading Vite port file:', error);
     }
     
-        // Load the URL directly
+    // Load the URL directly
     console.log(`🔗 Loading: ${viteUrl}`);
     
-    try {
-      await mainWindow.loadURL(viteUrl);
-      console.log(`✅ Successfully loaded: ${viteUrl}`);
-      
-      // Force show the window after successful load
-      setTimeout(() => {
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.show();
-          mainWindow.focus();
-          console.log('🪟 Window forced to show and focus');
-        }
-      }, 500);
-      
-    } catch (error) {
-      console.error(`❌ Failed to load ${viteUrl}:`, error);
-      // Simple fallback
+    // More robust retry mechanism with multiple attempts
+    let loaded = false;
+    let attempts = 0;
+    const maxAttempts = 5;
+    
+    while (!loaded && attempts < maxAttempts) {
+      attempts++;
       try {
-        await mainWindow.loadURL('http://localhost:3001');
-        console.log('🔄 Fallback to default port successful');
+        console.log(`🔄 Load attempt ${attempts}/${maxAttempts}...`);
+        await mainWindow.loadURL(viteUrl);
+        console.log(`✅ Successfully loaded: ${viteUrl} on attempt ${attempts}`);
+        loaded = true;
+      } catch (error) {
+        console.error(`❌ Attempt ${attempts} failed:`, error);
         
-        // Force show window for fallback too
-        setTimeout(() => {
-          if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.show();
-            mainWindow.focus();
-            console.log('🪟 Fallback window forced to show');
-          }
-        }, 500);
-        
-      } catch (fallbackError) {
-        console.error('💥 Complete failure:', fallbackError);
+        if (attempts < maxAttempts) {
+          // Increase delay with each attempt (exponential backoff)
+          const delay = 1000 * Math.pow(1.5, attempts);
+          console.log(`⏳ Waiting ${delay}ms before next attempt...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
       }
     }
+    
+    if (!loaded) {
+      console.error(`❌ All ${maxAttempts} load attempts failed`);
+      
+      // Fallback to default port if different
+      if (viteUrl !== 'http://localhost:3001' && mainWindow && !mainWindow.isDestroyed()) {
+        try {
+          console.log('⏳ Trying fallback URL: http://localhost:3001');
+          await mainWindow.loadURL('http://localhost:3001');
+          console.log('✅ Fallback successful');
+        } catch (fallbackError) {
+          console.error('❌ Fallback also failed');
+          
+          // Show error page as last resort
+          const errorHtml = `
+            <html>
+              <head>
+                <title>Connection Error</title>
+                <style>
+                  body { font-family: Arial, sans-serif; background-color: #f5f5f5; color: #333; text-align: center; padding: 50px; }
+                  .error-container { background-color: white; border-radius: 8px; padding: 30px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+                  h1 { color: #e74c3c; }
+                  .buttons { margin-top: 30px; }
+                  button { background-color: #3498db; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-size: 16px; margin: 0 10px; }
+                  button:hover { background-color: #2980b9; }
+                </style>
+              </head>
+              <body>
+                <div class="error-container">
+                  <h1>Connection Error</h1>
+                  <p>Could not connect to the development server.</p>
+                  <p>Make sure the Vite development server is running.</p>
+                  <div class="buttons">
+                    <button onclick="window.location.reload()">Retry Connection</button>
+                    <button onclick="window.electronAPI.restart()">Restart App</button>
+                  </div>
+                </div>
+              </body>
+            </html>
+          `;
+          mainWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(errorHtml)}`);
+        }
+      }
+    }
+    
+    // Show window after a delay regardless of load status
+    setTimeout(() => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.show();
+        mainWindow.focus();
+        console.log('🪟 Window force-shown after delay');
+      }
+    }, 500);
     
     mainWindow.webContents.openDevTools();
   } else {
@@ -157,20 +210,30 @@ async function createWindow(): Promise<void> {
 
   // Start built-in WebSocket server for progress updates
   try {
-    console.log('[ELECTRON] Starting built-in WebSocket server...');
-    const result = startWebSocketServer();
-    if (result.running) {
-      console.log(`[ELECTRON] WebSocket server started successfully on port ${result.port}`);
-      
-      // Set up file watcher for progress updates
-      setupProgressFileWatcher();
-    } else {
-      console.error('[ELECTRON] Failed to start WebSocket server');
-    }
+    // [REMOVED] Electron WebSocket server startup (now handled by Python)
+    // const result = startWebSocketServer();
+    // if (result.running) {
+    //   console.log(`[ELECTRON] WebSocket server started successfully on port ${result.port}`);
+    //   setupProgressFileWatcher();
+    // } else {
+    //   console.error('[ELECTRON] Failed to start WebSocket server');
+    // }
   } catch (e) {
-    console.error('[ELECTRON] Error starting WebSocket server:', e);
+    console.error('[ELECTRON] Error starting progress server:', e);
   }
 }
+
+// App restart handler
+ipcMain.handle('app-restart', () => {
+  console.log('🔄 Restarting application...');
+  app.relaunch();
+  app.exit(0);
+});
+
+// Clean up resources
+app.on('before-quit', () => {
+  console.log('Cleaning up before quitting...');
+});
 
 app.whenReady().then(async () => {
   await createWindow();
@@ -245,9 +308,7 @@ ipcMain.handle('process-dropped-files', async (_, filePaths: string[]) => {
 
 ipcMain.handle('python-scan-folder', async (_, folderPath: string) => {
   return new Promise((resolve, reject) => {
-    const pythonPath = isDev 
-      ? join(__dirname, '../python/normalizer.py')
-      : join(process.resourcesPath, 'python/normalizer.py');
+    const pythonPath = getResourcePath('python/normalizer.py');
     
     console.log('Python scan - isDev:', isDev);
     console.log('Python path:', pythonPath);
@@ -310,9 +371,7 @@ ipcMain.handle('python-scan-folder', async (_, folderPath: string) => {
 
 ipcMain.handle('python-generate-mapping', async (_, tree: any, profile: any) => {
   return new Promise((resolve, reject) => {
-    const pythonPath = isDev 
-      ? join(__dirname, '../python/normalizer.py')
-      : join(process.resourcesPath, 'python/normalizer.py');
+    const pythonPath = getResourcePath('python/normalizer.py');
     
     console.log('Python mapping - isDev:', isDev);
     console.log('Python path:', pythonPath);
@@ -441,9 +500,7 @@ ipcMain.handle('python-generate-mapping', async (_, tree: any, profile: any) => 
 
 ipcMain.handle('python-apply-mappings', async (_, mappings: any[]) => {
   return new Promise((resolve, reject) => {
-    const pythonPath = isDev 
-      ? join(__dirname, '../python/normalizer.py')
-      : join(process.resourcesPath, 'python/normalizer.py');
+    const pythonPath = getResourcePath('python/normalizer.py');
     
     const python = spawn('py', [pythonPath, 'apply']);
     let output = '';
@@ -477,14 +534,13 @@ ipcMain.handle('python-apply-mappings', async (_, mappings: any[]) => {
 // Enhanced apply mappings with options
 ipcMain.handle('python-apply-mappings-enhanced', async (_, data: any) => {
   return new Promise((resolve, reject) => {
-    const pythonPath = isDev 
-      ? join(__dirname, '../python/normalizer.py')
-      : join(process.resourcesPath, 'python/normalizer.py');
+    const pythonPath = getResourcePath('python/normalizer.py');
     
     console.log('[ELECTRON] Starting python-apply-mappings-enhanced');
     console.log('[ELECTRON] Data keys:', Object.keys(data));
     console.log('[ELECTRON] Operation type:', data.operation_type);
     console.log('[ELECTRON] Number of mappings:', data.mappings?.length);
+    console.log('[ELECTRON] WebSocket port requested:', data.websocket_port || 8765);
     
     const python = spawn('py', [pythonPath, 'apply']);
     let output = '';
@@ -506,7 +562,24 @@ ipcMain.handle('python-apply-mappings-enhanced', async (_, data: any) => {
       error += chunk;
     });
 
+    // Add timeout to prevent hanging
+    const timeoutId = setTimeout(() => {
+      if (!python.killed) {
+        console.log('[ELECTRON] Killing Python apply process due to timeout');
+        python.kill();
+        resolve({ 
+          success: false, 
+          success_count: 0, 
+          error_count: data.mappings?.length || 0,
+          error: 'Operation timed out after 5 minutes'
+        });
+      }
+    }, 300000); // 5 minutes timeout
+
     python.on('close', (code) => {
+      // Clear the timeout since the process has completed
+      clearTimeout(timeoutId);
+      
       console.log('[ELECTRON] Python apply process closed with code:', code);
       console.log('[ELECTRON] Output length:', output.length);
       console.log('[ELECTRON] Error length:', error.length);
@@ -540,9 +613,7 @@ ipcMain.handle('python-apply-mappings-enhanced', async (_, data: any) => {
 // Progress tracking
 ipcMain.handle('python-get-progress', async (_, batchId: string) => {
   return new Promise((resolve, reject) => {
-    const pythonPath = isDev 
-      ? join(__dirname, '../python/normalizer.py')
-      : join(process.resourcesPath, 'python/normalizer.py');
+    const pythonPath = getResourcePath('python/normalizer.py');
     
     const python = spawn('py', [pythonPath, 'progress', batchId]);
     let output = '';
@@ -573,9 +644,7 @@ ipcMain.handle('python-get-progress', async (_, batchId: string) => {
 // Pause operations
 ipcMain.handle('python-pause-operations', async () => {
   return new Promise((resolve, reject) => {
-    const pythonPath = isDev 
-      ? join(__dirname, '../python/normalizer.py')
-      : join(process.resourcesPath, 'python/normalizer.py');
+    const pythonPath = getResourcePath('python/normalizer.py');
     
     const python = spawn('py', [pythonPath, 'pause']);
     let output = '';
@@ -606,9 +675,7 @@ ipcMain.handle('python-pause-operations', async () => {
 // Resume operations
 ipcMain.handle('python-resume-operations', async () => {
   return new Promise((resolve, reject) => {
-    const pythonPath = isDev 
-      ? join(__dirname, '../python/normalizer.py')
-      : join(process.resourcesPath, 'python/normalizer.py');
+    const pythonPath = getResourcePath('python/normalizer.py');
     
     const python = spawn('py', [pythonPath, 'resume']);
     let output = '';
@@ -639,9 +706,7 @@ ipcMain.handle('python-resume-operations', async () => {
 // Cancel operations
 ipcMain.handle('python-cancel-operations', async () => {
   return new Promise((resolve, reject) => {
-    const pythonPath = isDev 
-      ? join(__dirname, '../python/normalizer.py')
-      : join(process.resourcesPath, 'python/normalizer.py');
+    const pythonPath = getResourcePath('python/normalizer.py');
     
     const python = spawn('py', [pythonPath, 'cancel']);
     let output = '';
@@ -672,9 +737,7 @@ ipcMain.handle('python-cancel-operations', async () => {
 // Cancel specific operation by batch ID
 ipcMain.handle('python-cancel-operation', async (_, batchId: string) => {
   return new Promise((resolve, reject) => {
-    const pythonPath = isDev 
-      ? join(__dirname, '../python/normalizer.py')
-      : join(process.resourcesPath, 'python/normalizer.py');
+    const pythonPath = getResourcePath('python/normalizer.py');
     
     const python = spawn('py', [pythonPath, 'cancel', batchId]);
     let output = '';
@@ -706,9 +769,7 @@ ipcMain.handle('python-cancel-operation', async (_, batchId: string) => {
 // (This is an alias to python-cancel-operation for clarity in the frontend code)
 ipcMain.handle('python-cancel-scan', async (_, batchId: string) => {
   return new Promise((resolve, reject) => {
-    const pythonPath = isDev 
-      ? join(__dirname, '../python/normalizer.py')
-      : join(process.resourcesPath, 'python/normalizer.py');
+    const pythonPath = getResourcePath('python/normalizer.py');
     
     const python = spawn('py', [pythonPath, 'cancel', batchId]);
     let output = '';
@@ -739,9 +800,7 @@ ipcMain.handle('python-cancel-scan', async (_, batchId: string) => {
 // Validate sequence integrity
 ipcMain.handle('python-validate-sequences', async (_, batchId: string) => {
   return new Promise((resolve, reject) => {
-    const pythonPath = isDev 
-      ? join(__dirname, '../python/normalizer.py')
-      : join(process.resourcesPath, 'python/normalizer.py');
+    const pythonPath = getResourcePath('python/normalizer.py');
     
     const python = spawn('py', [pythonPath, 'validate', batchId]);
     let output = '';
@@ -771,9 +830,7 @@ ipcMain.handle('python-validate-sequences', async (_, batchId: string) => {
 
 ipcMain.handle('python-undo-last-batch', async () => {
   return new Promise((resolve, reject) => {
-    const pythonPath = isDev 
-      ? join(__dirname, '../python/normalizer.py')
-      : join(process.resourcesPath, 'python/normalizer.py');
+    const pythonPath = getResourcePath('python/normalizer.py');
     
     const python = spawn('py', [pythonPath, 'undo']);
     let output = '';
@@ -905,9 +962,7 @@ ipcMain.handle('save-pattern-config', async (event, config) => {
 
 ipcMain.handle('python-scan-folder-with-progress', async (_, folderPath: string) => {
   return new Promise((resolve, reject) => {
-    const pythonPath = isDev 
-      ? join(__dirname, '../python/normalizer.py')
-      : join(process.resourcesPath, 'python/normalizer.py');
+    const pythonPath = getResourcePath('python/normalizer.py');
 
     console.log('Python scan with progress - isDev:', isDev);
     console.log('Python path:', pythonPath);
@@ -953,9 +1008,7 @@ ipcMain.handle('python-scan-folder-with-progress', async (_, folderPath: string)
 // Add scan progress polling handler
 ipcMain.handle('python-get-scan-progress', async (_, batchId: string) => {
   return new Promise((resolve, reject) => {
-    const pythonPath = isDev 
-      ? join(__dirname, '../python/normalizer.py')
-      : join(process.resourcesPath, 'python/normalizer.py');
+    const pythonPath = getResourcePath('python/normalizer.py');
 
     const python = spawn('py', [pythonPath, 'progress', batchId]);
     let output = '';
@@ -986,9 +1039,8 @@ ipcMain.handle('python-get-scan-progress', async (_, batchId: string) => {
 
 // Add WebSocket port handler using the built-in WebSocket server
 ipcMain.handle('python-get-websocket-port', async () => {
-  const port = getWebSocketPort();
-  console.log('[ELECTRON] WebSocket port requested:', port);
-  return port;
+  // Always return the Python WebSocket server port
+  return 8765;
 });
 
 // Add handler for progress updates - python can call this through IPC or polling a file
@@ -997,68 +1049,17 @@ ipcMain.handle('send-progress-update', async (_, batchId, filesProcessed, totalF
   if (filesProcessed % 500 === 0 || status === 'completed' || status === 'failed') {
     console.log(`[ELECTRON] Sending progress update for batch ${batchId}: ${filesProcessed}/${totalFiles} - ${status}`);
   }
-  return sendProgressUpdate(batchId, filesProcessed, totalFiles, currentFile, status);
+  return { success: false, message: 'sendProgressUpdate is deprecated; use Python WebSocket server.' };
 });
 
 // Add file watcher for progress updates (alternative to direct IPC)
 const setupProgressFileWatcher = () => {
-  try {
-    const progressDir = path.join(app.getAppPath(), 'python', '_progress');
-    if (!fs.existsSync(progressDir)) {
-      fs.mkdirSync(progressDir, { recursive: true });
-    }
-    
-    const latestProgressFile = path.join(progressDir, 'latest_progress.json');
-    
-    // Check if the file exists and process initial content
-    if (fs.existsSync(latestProgressFile)) {
-      try {
-        const content = fs.readFileSync(latestProgressFile, 'utf8');
-        const data = JSON.parse(content);
-        if (data.batch_id && data.totalFiles) {
-          sendProgressUpdate(
-            data.batch_id,
-            data.filesProcessed,
-            data.totalFiles,
-            data.currentFile,
-            data.status
-          );
-        }
-      } catch (e) {
-        console.error('[ELECTRON] Error reading initial progress file:', e);
-      }
-    }
-    
-    // Set up watcher for future updates
-    fs.watch(progressDir, (eventType, filename) => {
-      if (filename === 'latest_progress.json' && eventType === 'change') {
-        try {
-          const content = fs.readFileSync(latestProgressFile, 'utf8');
-          const data = JSON.parse(content);
-          if (data.batch_id && data.totalFiles) {
-            sendProgressUpdate(
-              data.batch_id,
-              data.filesProcessed,
-              data.totalFiles,
-              data.currentFile,
-              data.status
-            );
-          }
-        } catch (e) {
-          // Ignore file read errors - they can happen when file is being written
-        }
-      }
-    });
-    
-    console.log('[ELECTRON] Progress file watcher set up successfully');
-  } catch (e) {
-    console.error('[ELECTRON] Error setting up progress file watcher:', e);
-  }
+  // This function is now a no-op
 };
 
-// Add handler for WebSocket server status
+// Add handlers for WebSocket server status and progress monitoring
 ipcMain.handle('get-websocket-status', async () => {
-  return getServerStatus();
+  return { running: false, message: 'getServerStatus is deprecated; use Python WebSocket server.' };
 });
 
 // End of IPC handlers

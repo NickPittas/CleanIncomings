@@ -25,7 +25,7 @@ progress_dir = os.path.join(os.path.dirname(__file__), "_progress")
 os.makedirs(progress_dir, exist_ok=True)
 
 class ProgressServer:
-    def __init__(self, host='localhost', port=8765):
+    def __init__(self, host='127.0.0.1', port=8765):
         self.host = host
         self.port = port
         self.clients: Set[websockets.WebSocketServerProtocol] = set()
@@ -165,47 +165,49 @@ class ProgressServer:
     async def start_server(self):
         """Start the WebSocket server"""
         logger.info(f"Starting WebSocket server on {self.host}:{self.port}")
-        
+        print(f"[DEBUG] [start_server] Entered start_server (host={self.host}, port={self.port})", file=sys.stderr)
         # Reset connection error count on restart
         self.connection_errors = 0
-        
         # Try starting with increasing port numbers until one works
         max_port = self.port + 100  # Don't try forever
         current_port = self.port
         
         while current_port < max_port:
             try:
-                # Store the event loop for cross-thread communication
+                print(f"[DEBUG] [start_server] About to call asyncio.get_running_loop()", file=sys.stderr)
                 self._loop = asyncio.get_running_loop()
-                
+                print(f"[DEBUG] [start_server] Got running loop: {self._loop}", file=sys.stderr)
+                print(f"[DEBUG] [start_server] About to call websockets.serve on {self.host}:{current_port}", file=sys.stderr)
                 self.server = await websockets.serve(
                     self.handle_client,
                     self.host,
                     current_port
                 )
-                
+                print(f"[DEBUG] [start_server] websockets.serve returned, server started on port {current_port}", file=sys.stderr)
                 self.port = current_port  # Update to actual port used
                 self.running = True
                 logger.info(f"WebSocket server started successfully on port {self.port}")
-                
                 # Write port to file so frontend can find it
                 self._write_port_to_file(self.port)
-                
                 # Reset error count on successful start
                 self.connection_errors = 0
                 return
                 
             except OSError as e:
+                print(f"[DEBUG] [start_server] OSError on port {current_port}: {e}", file=sys.stderr)
                 # Port might be in use
                 self.connection_errors += 1
                 logger.warning(f"Failed to start WebSocket server on port {current_port}: {e}")
                 current_port += 1
             except Exception as e:
+                print(f"[DEBUG] [start_server] Exception: {e}", file=sys.stderr)
+                print(traceback.format_exc(), file=sys.stderr)
                 logger.error(f"Unexpected error starting WebSocket server: {e}")
                 logger.debug(traceback.format_exc())
                 break
         
         # If we get here, we failed to start on any port
+        print(f"[DEBUG] [start_server] Failed to start WebSocket server after trying ports {self.port}-{current_port}", file=sys.stderr)
         self.running = False
         logger.error(f"Failed to start WebSocket server after trying ports {self.port}-{current_port}")
     
@@ -279,71 +281,107 @@ def get_websocket_port():
     # Default fallback
     return 8765
 
+# Store the event loop globally for shutdown
+_loop_ref = None
+
+def run_server():
+    print("[DEBUG] Entered run_server thread", file=sys.stderr)
+    try:
+        print("[DEBUG] Creating new asyncio event loop", file=sys.stderr)
+        loop = asyncio.new_event_loop()
+        print("[DEBUG] Setting event loop", file=sys.stderr)
+        asyncio.set_event_loop(loop)
+        print("[DEBUG] Getting progress server instance", file=sys.stderr)
+        server = get_progress_server()
+        print("[DEBUG] About to call loop.run_until_complete(server.start_server())", file=sys.stderr)
+        # Sleep after event loop and server instance are ready
+        time.sleep(0.5)
+        print("[DEBUG] Calling loop.run_until_complete(server.start_server())", file=sys.stderr)
+        loop.run_until_complete(server.start_server())
+        print("[DEBUG] Finished loop.run_until_complete(server.start_server())", file=sys.stderr)
+        global _server_port
+        _server_port = server.port
+        print(f"[DEBUG] WebSocket server running on port {_server_port}, entering run_forever loop", file=sys.stderr)
+        logger.info(f"[THREAD] WebSocket server running on port {_server_port}, entering run_forever loop")
+        try:
+            print("[DEBUG] Calling loop.run_forever()", file=sys.stderr)
+            loop.run_forever()
+            print("[DEBUG] loop.run_forever() exited", file=sys.stderr)
+        except KeyboardInterrupt:
+            print("[DEBUG] KeyboardInterrupt in run_server", file=sys.stderr)
+            pass
+        finally:
+            print("[DEBUG] Stopping WebSocket server event loop...", file=sys.stderr)
+            logger.info("[THREAD] Stopping WebSocket server event loop...")
+            loop.run_until_complete(server.stop_server())
+            print("[DEBUG] Closing event loop", file=sys.stderr)
+            loop.close()
+            print("[DEBUG] WebSocket server event loop closed.", file=sys.stderr)
+            logger.info("[THREAD] WebSocket server event loop closed.")
+    except Exception as e:
+        print(f"[DEBUG] Exception in run_server: {e}", file=sys.stderr)
+        import traceback
+        print(traceback.format_exc(), file=sys.stderr)
+        logger.error(f"Failed to start WebSocket server thread: {e}")
+        logger.debug(traceback.format_exc())
+
 def start_progress_server():
     """Start the progress server in a background thread if not already running"""
     global _server_thread, _server_port, _shutdown_event
-    
+    print("[DEBUG] Entered start_progress_server", file=sys.stderr)
     # Don't start if already running
     if _server_thread and _server_thread.is_alive():
+        print("[DEBUG] WebSocket server already running (thread alive)", file=sys.stderr)
         logger.info("WebSocket server already running")
         return True
-    
-    # Reset shutdown event
+    print("[DEBUG] Clearing shutdown event", file=sys.stderr)
     _shutdown_event.clear()
-    
-    def run_server():
-        try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-            server = get_progress_server()
-            loop.run_until_complete(server.start_server())
-            
-            # Store the port globally
-            global _server_port
-            _server_port = server.port
-            
-            try:
-                # Run until shutdown event is set
-                while not _shutdown_event.is_set():
-                    loop.run_until_complete(asyncio.sleep(0.1))
-            except KeyboardInterrupt:
-                pass
-            except Exception as e:
-                logger.error(f"Error in WebSocket server loop: {e}")
-                logger.debug(traceback.format_exc())
-            finally:
-                loop.run_until_complete(server.stop_server())
-                loop.close()
-        except Exception as e:
-            logger.error(f"Failed to start WebSocket server thread: {e}")
-            logger.debug(traceback.format_exc())
-    
+    # Create the thread but do not start it while holding the lock
     with _server_lock:
+        print("[DEBUG] Acquired _server_lock in start_progress_server", file=sys.stderr)
         if _server_thread and _server_thread.is_alive():
+            print("[DEBUG] WebSocket server already running (thread alive, inside lock)", file=sys.stderr)
             logger.info("WebSocket server already running")
             return True
-            
-        _server_thread = threading.Thread(target=run_server, daemon=True)
-        _server_thread.start()
-        
-        # Give server time to start
-        time.sleep(0.5)
-        
-        # Check if server is running
-        server = get_progress_server()
-        logger.info(f"Progress server started in background thread on port {server.port}")
-        return server.running
+        print("[DEBUG] Creating server thread", file=sys.stderr)
+        server_thread = threading.Thread(target=run_server, daemon=True)
+    # Now start the thread after releasing the lock
+    print("[DEBUG] Starting server thread", file=sys.stderr)
+    _server_thread = server_thread
+    _server_thread.start()
+    # Sleep after thread start
+    print("[DEBUG] Sleeping 0.5s to allow server to start", file=sys.stderr)
+    time.sleep(0.5)
+    print("[DEBUG] Checking server status after thread start", file=sys.stderr)
+    server = get_progress_server()
+    logger.info(f"Progress server started in background thread on port {server.port}")
+    print(f"[DEBUG] Progress server started in background thread on port {server.port}", file=sys.stderr)
+    return server.running
 
 def stop_progress_server():
     """Stop the progress server if it's running"""
-    global _server_thread, _shutdown_event
-    
+    global _server_thread, _shutdown_event, _instance
+    print("[DEBUG] Entered stop_progress_server", file=sys.stderr)
     if _server_thread and _server_thread.is_alive():
+        print("[DEBUG] Stopping WebSocket server via event loop...", file=sys.stderr)
+        logger.info("[STOP] Stopping WebSocket server via event loop...")
+        # Signal the event loop to stop
+        try:
+            server = get_progress_server()
+            if hasattr(server, '_loop') and server._loop and not server._loop.is_closed():
+                print("[DEBUG] Calling server._loop.stop() from main thread", file=sys.stderr)
+                server._loop.call_soon_threadsafe(server._loop.stop)
+        except Exception as e:
+            print(f"[DEBUG] Error stopping event loop: {e}", file=sys.stderr)
+            logger.error(f"[STOP] Error stopping event loop: {e}")
+        print("[DEBUG] Setting shutdown event", file=sys.stderr)
         _shutdown_event.set()
+        print("[DEBUG] Joining server thread", file=sys.stderr)
         _server_thread.join(timeout=2.0)
+        print("[DEBUG] WebSocket server stopped", file=sys.stderr)
         logger.info("WebSocket server stopped")
         return True
+    print("[DEBUG] No server thread to stop", file=sys.stderr)
     return False
 
 def send_progress_update(batch_id: str, files_processed: int, total_files: int, 
@@ -415,48 +453,44 @@ def check_server_health():
     }
 
 if __name__ == "__main__":
+    print("[DEBUG] __main__ entry: starting progress server", file=sys.stderr)
     # Check for command-line arguments
     if len(sys.argv) > 1:
+        print(f"[DEBUG] Command-line args: {sys.argv[1:]}", file=sys.stderr)
         command = sys.argv[1]
         
         if command == "get_port":
-            # Get current WebSocket port and print it to stdout
+            print("[DEBUG] get_port command", file=sys.stderr)
             port = get_websocket_port()
             print(port)
             sys.exit(0)
             
         elif command == "start":
-            # Start the WebSocket server
+            print("[DEBUG] start command", file=sys.stderr)
             start_progress_server()
-            
-            # Print server health after startup
             health = check_server_health()
             print(json.dumps(health))
             sys.exit(0)
             
         elif command == "stop":
-            # Stop the WebSocket server
+            print("[DEBUG] stop command", file=sys.stderr)
             stopped = stop_progress_server()
             print(json.dumps({"stopped": stopped}))
             sys.exit(0)
             
         elif command == "status":
-            # Get server health status
+            print("[DEBUG] status command", file=sys.stderr)
             health = check_server_health()
             print(json.dumps(health))
             sys.exit(0)
     else:
-        # Test the server
+        print("[DEBUG] No command-line args: running test server", file=sys.stderr)
         start_progress_server()
-        
-        # Print server health after startup
         health = check_server_health()
         print(f"Server health: {health}")
-        
-        # Simulate progress updates
         batch_id = "test-batch-123"
-        
         for i in range(11):
+            print(f"[DEBUG] Sending progress update {i}/10", file=sys.stderr)
             send_progress_update(
                 batch_id=batch_id,
                 files_processed=i,
@@ -465,6 +499,5 @@ if __name__ == "__main__":
                 status="running" if i < 10 else "completed"
             )
             time.sleep(1)
-            
-        # Stop the server
+        print("[DEBUG] Stopping test server", file=sys.stderr)
         stop_progress_server() 

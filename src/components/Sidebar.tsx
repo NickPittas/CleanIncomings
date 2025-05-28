@@ -11,10 +11,28 @@ async function generateMappingProposals(tree: any, profile: any): Promise<Mappin
     throw new Error('generateMapping API not available');
   }
   const result = await window.electronAPI.generateMapping(tree, profile);
-  if (!result || !Array.isArray(result.proposals)) {
-    throw new Error('Invalid response from generateMapping');
+  
+  // Check if result is an array directly (old format)
+  if (Array.isArray(result)) {
+    console.log('[INFO] Processing mapping results:', `Found ${result.length} mapping proposals (array format)`);
+    return result;
   }
-  return result.proposals;
+  
+  // Check if result has a 'mappings' property (new format from Python backend)
+  if (result && result.success && Array.isArray(result.mappings)) {
+    console.log('[INFO] Processing mapping results:', `Found ${result.mappings.length} mapping proposals (mappings format)`);
+    return result.mappings;
+  }
+  
+  // Check if result has a 'proposals' property (alternative format)
+  if (result && Array.isArray(result.proposals)) {
+    console.log('[INFO] Processing mapping results:', `Found ${result.proposals.length} mapping proposals (proposals format)`);
+    return result.proposals;
+  }
+  
+  // If we get here, the format is invalid
+  console.error('Invalid mapping result format:', result);
+  throw new Error('Invalid response format from generateMapping');
 }
 
 const Sidebar: React.FC = () => {
@@ -70,7 +88,7 @@ const Sidebar: React.FC = () => {
       setIsScanning(true);
       setLastError(null);
       addLog('info', 'Starting folder scan', folderPath);
-      startProgress('Scanning folder...');
+      startProgress('applying', 100); // Use 'applying' as the operation type and 100 as a placeholder total
       
       // Perform a regular scan without progress tracking
       const result = await window.electronAPI.scanFolder(folderPath);

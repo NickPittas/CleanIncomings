@@ -9,7 +9,7 @@ const createDefaultProfiles = (): Profile[] => {
       id: 'normal-internal-2024',
       name: 'Normal Internal Project',
       description: 'Standard internal VFX project structure with department-based organization',
-      vfxRootPath: '/vfx/projects/normal',
+      vfxRootPath: 'Z:\DEMO',
       userPatterns: {
         shotNames: [
           // Only use shot names that exist in patterns.json or are generic patterns

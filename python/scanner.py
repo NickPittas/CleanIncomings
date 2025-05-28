@@ -11,31 +11,18 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from os import scandir
 import re
 
-# Import progress functionality using Electron's WebSocket server
+# Import progress functionality using Python's progress_server only
 try:
-    from .electron_progress import send_progress_update, check_server_health, get_websocket_port, WEBSOCKET_AVAILABLE, SERVER_STARTED
-    print("[INFO] Using Electron WebSocket server for progress updates", file=sys.stderr)
+    from .progress_server import send_progress_update, start_progress_server, check_server_health, get_websocket_port, WEBSOCKET_AVAILABLE, SERVER_STARTED
+    print("[INFO] Using Python WebSocket server for progress updates", file=sys.stderr)
 except ImportError:
     try:
-        from electron_progress import send_progress_update, check_server_health, get_websocket_port, WEBSOCKET_AVAILABLE, SERVER_STARTED
-        print("[INFO] Using Electron WebSocket server for progress updates", file=sys.stderr)
+        from progress_server import send_progress_update, start_progress_server, check_server_health, get_websocket_port, WEBSOCKET_AVAILABLE, SERVER_STARTED
+        print("[INFO] Using Python WebSocket server for progress updates", file=sys.stderr)
     except ImportError:
-        # Fall back to the original progress_server if electron_progress is not available
-        try:
-            from .progress_server import send_progress_update, start_progress_server, check_server_health, get_websocket_port
-            WEBSOCKET_AVAILABLE = True
-            SERVER_STARTED = start_progress_server()
-            print("[INFO] Falling back to Python WebSocket server", file=sys.stderr)
-        except ImportError:
-            try:
-                from progress_server import send_progress_update, start_progress_server, check_server_health, get_websocket_port
-                WEBSOCKET_AVAILABLE = True
-                SERVER_STARTED = start_progress_server()
-                print("[INFO] Falling back to Python WebSocket server", file=sys.stderr)
-            except ImportError:
-                WEBSOCKET_AVAILABLE = False
-                SERVER_STARTED = False
-                print("[WARNING] WebSocket progress functionality not available for scanning", file=sys.stderr)
+        WEBSOCKET_AVAILABLE = False
+        SERVER_STARTED = False
+        print("[WARNING] WebSocket progress functionality not available for scanning", file=sys.stderr)
 
 
 class FileSystemScanner:
@@ -67,6 +54,33 @@ class FileSystemScanner:
         self._last_websocket_update_time = 0
         self._min_update_interval = 0.05  # Minimum 50ms between updates
         
+        # --- AUTO-START LOGIC FOR WEBSOCKET SERVER ---
+        global WEBSOCKET_AVAILABLE, SERVER_STARTED
+        try:
+            if WEBSOCKET_AVAILABLE:
+                from progress_server import start_progress_server, check_server_health, get_websocket_port
+                health = check_server_health()
+                if not health.get('running', False):
+                    print("[INFO] WebSocket server not running, attempting to start...", file=sys.stderr)
+                    started = start_progress_server()
+                    time.sleep(0.5)
+                    health = check_server_health()
+                    if started and health.get('running', False):
+                        SERVER_STARTED = True
+                        print(f"[INFO] WebSocket server started on port {get_websocket_port()}", file=sys.stderr)
+                    else:
+                        SERVER_STARTED = False
+                        print("[ERROR] Failed to start WebSocket server for progress updates", file=sys.stderr)
+                else:
+                    SERVER_STARTED = True
+                    print(f"[INFO] WebSocket progress server already running on port {get_websocket_port()}", file=sys.stderr)
+            else:
+                SERVER_STARTED = False
+                print("[WARNING] WebSocket progress functionality not available", file=sys.stderr)
+        except Exception as e:
+            SERVER_STARTED = False
+            print(f"[ERROR] Exception during WebSocket server auto-start: {e}", file=sys.stderr)
+
         # WebSocket server should already be running from main application
         if WEBSOCKET_AVAILABLE and SERVER_STARTED:
             print(f"[INFO] WebSocket progress functionality available for scanning on port {get_websocket_port()}", file=sys.stderr)
@@ -527,7 +541,7 @@ class FileSystemScanner:
         return False
 
     def _build_tree_from_files(
-        self, root_path: Path, files: List[Path], folders_only: bool = False
+        self, root_path: Path, files: List[Path], folders_only: bool = False, directories: List[Path] = None
     ) -> Dict[str, Any]:
         print(f"Building tree structure from {len(files)} files...", file=sys.stderr)
         tree = {
@@ -700,3 +714,28 @@ class FileSystemScanner:
         if children:
             node["children"] = children
         return node
+
+# --- TEST CODE FOR SERVER STARTUP ---
+if __name__ == "__main__":
+    print("[TEST] Initializing FileSystemScanner and triggering scan...")
+    scanner = FileSystemScanner()
+    # Use a small test directory or create one
+    test_dir = os.path.join(os.path.dirname(__file__), "_progress_test")
+    os.makedirs(test_dir, exist_ok=True)
+    # Create a dummy file
+    with open(os.path.join(test_dir, "dummy.txt"), "w") as f:
+        f.write("test")
+    batch_id = scanner.scan_directory_with_progress(test_dir)
+    print(f"[TEST] Scan started with batch_id: {batch_id}")
+    # Check WebSocket server health
+    try:
+        from progress_server import check_server_health, get_websocket_port
+        health = check_server_health()
+        print(f"[TEST] WebSocket server health: {health}")
+        if health.get('running', False):
+            print(f"[TEST] WebSocket server running on port {get_websocket_port()}")
+        else:
+            print("[TEST] WebSocket server is NOT running!")
+    except Exception as e:
+        print(f"[TEST] Exception checking WebSocket server health: {e}")
+    print("[TEST] Done.")

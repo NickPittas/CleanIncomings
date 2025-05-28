@@ -1,6 +1,7 @@
 import React from 'react';
 import { IconSettings, IconTerminal, IconRefresh } from '@tabler/icons-react';
 import { useSettingsStore, useAppStore } from '../store';
+import { ProgressBarTrigger } from './WebSocketProgressBar';
 
 const Header: React.FC = () => {
   const { setOpen } = useSettingsStore();
@@ -61,6 +62,7 @@ const Header: React.FC = () => {
           <IconRefresh size={14} />
           Refresh
         </button>
+        <ProgressBarTrigger />
         <button 
           className="button secondary small" 
           onClick={() => setLogWindowOpen(!isLogWindowOpen)}

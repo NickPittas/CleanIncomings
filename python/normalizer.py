@@ -29,9 +29,16 @@ try:
 except ImportError:
     websockets = None
 
-from scanner import FileSystemScanner
-from mapping import MappingGenerator
-from fileops import FileOperations
+# Use relative imports for running as a module
+try:
+    from .scanner import FileSystemScanner
+    from .mapping import MappingGenerator
+    from .fileops import FileOperations
+except ImportError:
+    # Fallback for direct script execution
+    from scanner import FileSystemScanner
+    from mapping import MappingGenerator
+    from fileops import FileOperations
 
 
 def create_test_data() -> Dict[str, Any]:
@@ -302,7 +309,9 @@ def main():
             )
             print(f"[DEBUG] Number of mappings: {len(mappings)}", file=sys.stderr)
 
-            operations = FileOperations()
+            # Initialize FileOperations with WebSocket enabled for progress tracking
+            print(f"[DEBUG] Initializing FileOperations with WebSocket enabled", file=sys.stderr)
+            operations = FileOperations(start_websocket=True)
             
             # Use multithreaded operations if enabled
             if use_multithreaded:
@@ -373,7 +382,7 @@ def main():
             print(f"[DEBUG] Max workers (file chunks): {max_workers}", file=sys.stderr)
             print(f"[DEBUG] File workers (concurrent files): {file_workers}", file=sys.stderr)
 
-            operations = FileOperations()
+            operations = FileOperations(start_websocket=True)
             result = operations.apply_mappings_multithreaded(
                 mappings,
                 operation_type=operation_type,

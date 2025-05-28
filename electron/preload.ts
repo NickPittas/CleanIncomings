@@ -20,6 +20,7 @@ export interface ElectronAPI {
   savePatternConfig: (config: any) => Promise<any>;
   getWebSocketPort: () => Promise<number | null>;
   cancelScan: (batchId: string) => Promise<any>;
+  restart: () => void;
 }
 
 const electronAPI: ElectronAPI = {
@@ -42,6 +43,7 @@ const electronAPI: ElectronAPI = {
   savePatternConfig: (config: any) => ipcRenderer.invoke('save-pattern-config', config),
   getWebSocketPort: () => ipcRenderer.invoke('python-get-websocket-port'),
   cancelScan: (batchId: string) => ipcRenderer.invoke('python-cancel-scan', batchId),
+  restart: () => ipcRenderer.invoke('app-restart'),
 };
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI); 

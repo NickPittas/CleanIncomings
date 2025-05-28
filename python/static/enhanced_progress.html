@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>File Operation Progress</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f7fa;
+            color: #333;
+        }
+        .container {
+            background: white;
+            padding: 20px 25px;
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+        }
+        h1 {
+            color: #2c3e50;
+            margin-top: 0;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .status {
+            padding: 10px 15px;
+            border-radius: 6px;
+            margin: 15px 0;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .connected { 
+            background-color: #d4edda; 
+            color: #155724; 
+            border-left: 4px solid #28a745;
+        }
+        .disconnected { 
+            background-color: #f8d7da; 
+            color: #721c24; 
+            border-left: 4px solid #dc3545;
+        }
+        .connecting { 
+            background-color: #fff3cd; 
+            color: #856404; 
+            border-left: 4px solid #ffc107;
+        }
+        .info-panel {
+            background-color: #f8f9fa;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        .progress-container {
+            margin: 25px 0;
+        }
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background-color: #e9ecef;
+            border-radius: 10px;
+            overflow: hidden;
+            position: relative;
+        }
+        .progress-fill {
+            height: 100%;
+            background-color: #3498db;
+            transition: width 0.3s ease;
+            border-radius: 10px;
+            text-align: center;
+            color: white;
+            font-size: 12px;
+            font-weight: bold;
+            line-height: 20px;
+            text-shadow: 0 1px 2px rgba(0,0,0,0.2);
+        }
+        .progress-fill.complete {
+            background-color: #2ecc71;
+        }
+        .progress-fill.error {
+            background-color: #e74c3c;
+        }
+        .operation-badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            font-weight: 500;
+            text-transform: uppercase;
+            margin-left: 10px;
+        }
+        .operation-badge.copy {
+            background-color: #3498db;
+            color: white;
+        }
+        .operation-badge.move {
+            background-color: #9b59b6;
+            color: white;
+        }
+        .current-file-container {
+            margin-top: 20px;
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #3498db;
+        }
+        .current-file-label {
+            font-size: 14px;
+            color: #6c757d;
+            margin-bottom: 5px;
+        }
+        .current-file {
+            font-family: 'Courier New', monospace;
+            word-break: break-all;
+            font-size: 14px;
+            transition: all 0.3s ease;
+        }
+        .file-highlight {
+            animation: highlight-file 1.5s ease;
+        }
+        @keyframes highlight-file {
+            0% { background-color: #fff7e1; }
+            50% { background-color: #ffecb3; }
+            100% { background-color: transparent; }
+        }
+        .files-info {
+            font-size: 16px;
+            font-weight: 500;
+            margin: 15px 0;
+            display: flex;
+            justify-content: space-between;
+        }
+        .log {
+            background-color: #2c3e50;
+            color: #ecf0f1;
+            border-radius: 8px;
+            padding: 15px;
+            max-height: 200px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 13px;
+            margin-top: 20px;
+        }
+        .log-entry {
+            margin-bottom: 5px;
+            border-bottom: 1px solid #3c5168;
+            padding-bottom: 5px;
+        }
+        .log-time {
+            color: #f1c40f;
+            margin-right: 8px;
+        }
+        .btn-group {
+            display: flex;
+            gap: 10px;
+            margin: 15px 0;
+        }
+        button {
+            padding: 8px 15px;
+            border-radius: 5px;
+            border: none;
+            background-color: #3498db;
+            color: white;
+            cursor: pointer;
+            font-weight: 500;
+            transition: background-color 0.2s;
+        }
+        button:hover {
+            background-color: #2980b9;
+        }
+        button:disabled {
+            background-color: #95a5a6;
+            cursor: not-allowed;
+        }
+        .timestamp {
+            font-size: 12px;
+            color: #6c757d;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>
+            File Operation Progress
+            <span id="operationBadge" class="operation-badge copy" style="display: none;">Copy</span>
+        </h1>
+        
+        <div id="status" class="status disconnected">
+            <span>❌ Disconnected</span>
+        </div>
+        
+        <div class="btn-group">
+            <button id="connectBtn" onclick="connect()">Connect</button>
+            <button id="disconnectBtn" onclick="disconnect()" disabled>Disconnect</button>
+            <button id="clearLogBtn" onclick="clearLog()">Clear Log</button>
+        </div>
+        
+        <div class="info-panel">
+            <div>
+                <strong>Batch ID:</strong> <span id="batchId">-</span>
+            </div>
+            <div>
+                <strong>Status:</strong> <span id="operationStatus">-</span>
+            </div>
+        </div>
+        
+        <div class="files-info">
+            <div>Files Processed: <span id="filesProcessed">0</span> / <span id="totalFiles">0</span></div>
+            <div>Progress: <span id="progressPercent">0.0%</span></div>
+        </div>
+        
+        <div class="progress-container">
+            <div class="progress-bar">
+                <div id="progressFill" class="progress-fill" style="width: 0%">0%</div>
+            </div>
+        </div>
+        
+        <div id="currentFileContainer" class="current-file-container" style="display: none;">
+            <div class="current-file-label">Currently Processing:</div>
+            <div id="currentFile" class="current-file">-</div>
+            <div class="timestamp" id="lastUpdate"></div>
+        </div>
+        
+        <div class="log" id="log"></div>
+    </div>
+    
+    <script>
+        // WebSocket connection
+        let ws = null;
+        let reconnectAttempts = 0;
+        const maxReconnectAttempts = 5;
+        let lastFileData = null;
+        let connectInterval = null;
+        
+        function updateTimestamp() {
+            const now = new Date();
+            document.getElementById('lastUpdate').textContent = 
+                `Last update: ${now.toLocaleTimeString()}`;
+        }
+        
+        function log(message) {
+            const logElem = document.getElementById('log');
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            
+            const time = document.createElement('span');
+            time.className = 'log-time';
+            time.textContent = new Date().toLocaleTimeString();
+            
+            entry.appendChild(time);
+            entry.appendChild(document.createTextNode(' ' + message));
+            
+            logElem.appendChild(entry);
+            logElem.scrollTop = logElem.scrollHeight;
+        }
+        
+        function updateStatus(status, message) {
+            const statusElem = document.getElementById('status');
+            statusElem.className = `status ${status}`;
+            statusElem.innerHTML = message;
+        }
+        
+        function updateProgress(data) {
+            // Update batch ID
+            document.getElementById('batchId').textContent = data.batch_id || '-';
+            
+            // Update status
+            document.getElementById('operationStatus').textContent = 
+                (data.status || '-').toUpperCase();
+            
+            // Update file counts
+            document.getElementById('filesProcessed').textContent = data.filesProcessed || 0;
+            document.getElementById('totalFiles').textContent = data.totalFiles || 0;
+            
+            // Update percentage
+            const percent = (data.progressPercentage || 0).toFixed(1);
+            document.getElementById('progressPercent').textContent = `${percent}%`;
+            
+            // Update progress bar
+            const progressFill = document.getElementById('progressFill');
+            progressFill.style.width = `${percent}%`;
+            progressFill.textContent = `${percent}%`;
+            
+            // Update progress fill color based on status
+            progressFill.className = 'progress-fill';
+            if (data.status === 'completed') {
+                progressFill.classList.add('complete');
+            } else if (data.status === 'error' || data.status === 'failed') {
+                progressFill.classList.add('error');
+            }
+            
+            // Update operation badge
+            const operationType = data.operationType || 'copy';
+            const badge = document.getElementById('operationBadge');
+            badge.textContent = operationType.toUpperCase();
+            badge.className = `operation-badge ${operationType}`;
+            badge.style.display = 'inline-block';
+            
+            // Update current file with highlight effect
+            updateCurrentFile(data.currentFile);
+            
+            // Update timestamp
+            updateTimestamp();
+        }
+        
+        function updateCurrentFile(filename) {
+            const container = document.getElementById('currentFileContainer');
+            const fileElem = document.getElementById('currentFile');
+            
+            // Don't update if filename is the same or empty
+            if (!filename) {
+                container.style.display = 'none';
+                return;
+            }
+            
+            // Show container
+            container.style.display = 'block';
+            
+            // Only add animation if filename changed
+            if (fileElem.textContent !== filename) {
+                // Remove old class to reset animation
+                fileElem.classList.remove('file-highlight');
+                
+                // Force reflow to restart animation
+                void fileElem.offsetWidth;
+                
+                // Set new content and add animation
+                fileElem.textContent = filename;
+                fileElem.classList.add('file-highlight');
+                
+                // Log filename change
+                log(`Processing file: ${filename}`);
+            }
+        }
+        
+        function connect() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                log('Already connected');
+                return;
+            }
+            
+            document.getElementById('connectBtn').disabled = true;
+            updateStatus('connecting', '<span>⏳ Connecting...</span>');
+            
+            try {
+                ws = new WebSocket('ws://localhost:8765');
+                
+                ws.onopen = () => {
+                    updateStatus('connected', '<span>✅ Connected</span>');
+                    log('Connected to WebSocket server');
+                    
+                    document.getElementById('connectBtn').disabled = true;
+                    document.getElementById('disconnectBtn').disabled = false;
+                    
+                    // Reset reconnect attempts
+                    reconnectAttempts = 0;
+                    
+                    // Start ping interval
+                    if (connectInterval) clearInterval(connectInterval);
+                    connectInterval = setInterval(() => {
+                        if (ws && ws.readyState === WebSocket.OPEN) {
+                            ws.send(JSON.stringify({type: 'ping'}));
+                        }
+                    }, 30000);
+                };
+                
+                ws.onclose = (event) => {
+                    updateStatus('disconnected', '<span>❌ Disconnected</span>');
+                    log(`Connection closed: ${event.code} - ${event.reason || 'No reason provided'}`);
+                    
+                    document.getElementById('connectBtn').disabled = false;
+                    document.getElementById('disconnectBtn').disabled = true;
+                    
+                    // Clear ping interval
+                    if (connectInterval) clearInterval(connectInterval);
+                    
+                    // Try to reconnect if not a normal closure
+                    if (event.code !== 1000 && reconnectAttempts < maxReconnectAttempts) {
+                        const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 10000);
+                        reconnectAttempts++;
+                        
+                        log(`Attempting to reconnect (${reconnectAttempts}/${maxReconnectAttempts}) in ${delay/1000} seconds`);
+                        setTimeout(connect, delay);
+                    }
+                };
+                
+                ws.onerror = (error) => {
+                    updateStatus('disconnected', '<span>❌ Connection Error</span>');
+                    log('WebSocket error occurred');
+                };
+                
+                ws.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        
+                        if (data.type === 'pong') {
+                            // Don't log pongs to avoid cluttering the log
+                        } else if (data.type === 'progress') {
+                            updateProgress(data);
+                        } else {
+                            log(`Received message: ${JSON.stringify(data)}`);
+                        }
+                    } catch (error) {
+                        log(`Error parsing message: ${error.message}`);
+                    }
+                };
+                
+            } catch (error) {
+                updateStatus('disconnected', '<span>❌ Connection Failed</span>');
+                log(`Connection error: ${error.message}`);
+                document.getElementById('connectBtn').disabled = false;
+            }
+        }
+        
+        function disconnect() {
+            if (connectInterval) clearInterval(connectInterval);
+            
+            if (ws) {
+                ws.close(1000, 'User disconnected');
+                ws = null;
+                log('Disconnected from server');
+            }
+            
+            document.getElementById('connectBtn').disabled = false;
+            document.getElementById('disconnectBtn').disabled = true;
+        }
+        
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+            log('Log cleared');
+        }
+        
+        // Auto-connect on page load
+        window.addEventListener('load', () => {
+            log('Page loaded, connecting to WebSocket server...');
+            setTimeout(connect, 500);
+        });
+    </script>
+</body>
+</html>

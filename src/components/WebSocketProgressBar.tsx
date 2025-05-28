@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, createContext, useContext } from 'react';
 import { useAppStore } from '../store';
 
 interface ProgressData {
@@ -9,6 +9,8 @@ interface ProgressData {
   currentFile: string;
   status: string;
   timestamp: number;
+  speed?: number; // Speed in MB/s
+  operationType?: string; // 'copy' or 'move'
 }
 
 interface WebSocketProgressBarProps {
@@ -16,6 +18,85 @@ interface WebSocketProgressBarProps {
   isMinimized?: boolean;
   onToggleMinimize?: () => void;
 }
+
+// ProgressBar context and provider for external control
+interface ProgressBarContextType {
+  show: () => void;
+  hide: () => void;
+  isVisible: boolean;
+  hidden: boolean;
+  isTriggerVisible: boolean;
+  progressState: any;
+  wsProgress: any;
+  setWsProgress: React.Dispatch<React.SetStateAction<any>>;
+}
+const ProgressBarContext = createContext<ProgressBarContextType>({
+  show: () => {},
+  hide: () => {},
+  isVisible: false,
+  hidden: false,
+  isTriggerVisible: false,
+  progressState: {},
+  wsProgress: null,
+  setWsProgress: () => {},
+});
+export const useProgressBarTrigger = () => useContext(ProgressBarContext);
+
+export const ProgressBarProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { progressState } = useAppStore();
+  const [wsProgress, setWsProgress] = useState<any>(null);
+  const [isVisible, setIsVisible] = useState(true);
+  const [hidden, setHidden] = useState(false);
+  const [lastActive, setLastActive] = useState<number | null>(null);
+
+  // Track when progress is active or recently active
+  useEffect(() => {
+    if (progressState.isActive || wsProgress) {
+      setLastActive(Date.now());
+    }
+  }, [progressState.isActive, wsProgress]);
+
+  // Auto-show bar on new operation
+  useEffect(() => {
+    if (progressState.isActive) {
+      setIsVisible(true);
+      setHidden(false);
+      console.log('[ProgressBarProvider] Auto-show on new operation');
+    }
+  }, [progressState.isActive]);
+
+  // Hide with grace period
+  const hide = () => {
+    setIsVisible(false);
+    setHidden(true);
+    console.log('[ProgressBarProvider] Hide called');
+  };
+  const show = () => {
+    setIsVisible(true);
+    setHidden(false);
+    console.log('[ProgressBarProvider] Show called');
+  };
+
+  // Grace period: trigger visible for 10s after last activity
+  const isTriggerVisible = hidden && ((progressState.isActive || wsProgress) || (lastActive && Date.now() - lastActive < 10000));
+
+  return (
+    <ProgressBarContext.Provider value={{
+      show,
+      hide,
+      isVisible,
+      hidden,
+      isTriggerVisible,
+      progressState,
+      wsProgress,
+      setWsProgress,
+    }}>
+      {children}
+      {/* Always mount the progress bar globally */}
+      <WebSocketProgressBar />
+    </ProgressBarContext.Provider>
+  );
+};
 
 export const WebSocketProgressBar: React.FC<WebSocketProgressBarProps> = ({ 
   className = '', 
@@ -30,28 +111,29 @@ export const WebSocketProgressBar: React.FC<WebSocketProgressBarProps> = ({
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const reconnectAttempts = useRef(0);
   const maxReconnectAttempts = 5;
-  const [websocketPort, setWebsocketPort] = useState<number>(8765);
+  
+  // Function to format file names
+  const getCurrentFileName = (filename: string) => {
+    if (!filename) return '';
+    const fileName = filename.split(/[\/\\]/).pop() || '';
+    return fileName.length > 40 ? `...${fileName.slice(-37)}` : fileName;
+  };
+  
+  // Function to format speed
+  const formatSpeed = (speed?: number) => {
+    if (!speed) return '';
+    return speed < 1 ? `${(speed * 1000).toFixed(1)} KB/s` : `${speed.toFixed(1)} MB/s`;
+  };
 
-  // Function to get the WebSocket port
-  const getWebSocketPort = async () => {
-    try {
-      if (window.electronAPI && 'getWebSocketPort' in window.electronAPI) {
-        const getPort = window.electronAPI.getWebSocketPort as () => Promise<number | null>;
-        const port = await getPort();
-        if (port && port > 0) {
-          // Only log port discovery if it's different from current port
-          if (port !== websocketPort) {
-            console.log(`📡 Discovered WebSocket port from API: ${port}`);
-          }
-          setWebsocketPort(port);
-          return port;
-        }
-      }
-      return 8765; // Default fallback
-    } catch (err) {
-      console.error('Failed to get WebSocket port:', err);
-      return 8765; // Default fallback
-    }
+  // Use simple Unicode icons instead of react-icons
+  const icons = {
+    copy: '📋',
+    move: '✂️',
+    minimize: '_',
+    close: '×',
+    check: '✓',
+    loading: '⟳',
+    alert: '⚠️'
   };
 
   // Function to connect to WebSocket with connection management
@@ -74,7 +156,7 @@ export const WebSocketProgressBar: React.FC<WebSocketProgressBarProps> = ({
       
       // Create WebSocket
       console.log(`Attempting WebSocket connection for operation progress on port ${port}`);
-      const ws = new WebSocket(`ws://localhost:${port}`);
+      const ws = new WebSocket(`ws://127.0.0.1:${port}`);
       
       // Set a connection timeout
       const connectionTimeout = setTimeout(() => {
@@ -110,18 +192,14 @@ export const WebSocketProgressBar: React.FC<WebSocketProgressBarProps> = ({
           }
         }, 15000); // Even less frequent heartbeat (15 seconds) to reduce traffic
         
-        // Send an initial message to register this client for the specific batch
-        if (wsProgress?.batch_id) {
-          try {
-            ws.send(JSON.stringify({ 
-              type: 'register', 
-              batch_id: wsProgress.batch_id,
-              client_type: 'operation_progress'
-            }));
-          } catch (err) {
-            console.error('Failed to register for batch updates:', err);
-          }
-        }
+        // Register for the current batchId only
+        const batchId = progressState.batchId || wsProgress?.batch_id || 'unknown';
+        console.log(`🔄 Registering WebSocket client for updates: ${batchId}`);
+        ws.send(JSON.stringify({
+          type: 'register',
+          batch_id: batchId,
+          client_type: 'operation_progress'
+        }));
         
         // Clean up interval on close
         ws.onclose = () => {
@@ -130,41 +208,100 @@ export const WebSocketProgressBar: React.FC<WebSocketProgressBarProps> = ({
       };
 
       ws.onmessage = (event) => {
+        // Log every message received
+        console.log('[WS DEBUG] Message received:', event.data);
         try {
-          const data = JSON.parse(event.data);
+          // Enhanced debug logging for all incoming messages
+          console.log(`📥 WebSocket raw message:`, event.data);
           
-          if (data.type === 'progress' && data.batch_id === wsProgress?.batch_id) {
-            // Only log significant updates to reduce console spam
-            if (data.status === 'completed' || data.status === 'failed' || 
-                data.filesProcessed % 100 === 0) {
-              console.log(`Progress: ${data.filesProcessed}/${data.totalFiles} files (${data.progressPercentage.toFixed(1)}%)`);
+          // Try to parse the message as JSON
+          let data;
+          try {
+            data = JSON.parse(event.data);
+          } catch (parseError) {
+            // Handle the case where the message isn't valid JSON
+            console.log('Received non-JSON message:', event.data);
+            
+            // Try to extract progress information from text message
+            // Example format: "[WEBSOCKET] Sending progress update for batch 785d8264-2349-4868-87c3-e76629738a51: 1563/1563 (100.0%)"
+            if (typeof event.data === 'string' && event.data.includes('progress update for batch')) {
+              try {
+                const parts = event.data.split(':');
+                const batchInfo = parts[0].split('batch ')[1].trim();
+                const progressParts = parts[1].trim().split(' ');
+                const [current, total] = progressParts[0].split('/');
+                const percentage = parseFloat(progressParts[1].replace('(', '').replace('%)', ''));
+                
+                data = {
+                  type: 'progress',
+                  batch_id: batchInfo,
+                  filesProcessed: parseInt(current, 10),
+                  totalFiles: parseInt(total, 10),
+                  progressPercentage: percentage,
+                  currentFile: '',
+                  status: 'running'
+                };
+                console.log('Extracted progress data from text message:', data);
+              } catch (extractError) {
+                console.error('Failed to extract progress from text message:', extractError);
+              }
             }
             
-            // Update progress data immediately
+            // If we still don't have valid data, return
+            if (!data) return;
+          }
+          
+          console.log(`📥 WebSocket parsed data:`, data);
+          
+          // Accept progress updates for any batch ID initially, or match the current one if we have it
+          if (data.type === 'progress' || 
+              // Also handle messages without explicit type but with progress data
+              (data.progressPercentage !== undefined || 
+               (data.filesProcessed !== undefined && data.totalFiles !== undefined))) {
+            
+            // Log all progress updates during development to debug
+            console.log(`📊 WebSocket progress update:`, data);
+            
+            // Update progress data immediately with defaults for missing fields
             const newProgress = {
-              batch_id: data.batch_id,
-              filesProcessed: data.filesProcessed || 0,
-              totalFiles: data.totalFiles || 0,
-              progressPercentage: data.progressPercentage || 0,
-              currentFile: data.currentFile || '',
+              batch_id: data.batch_id || (wsProgress?.batch_id || 'unknown'),
+              filesProcessed: typeof data.filesProcessed === 'number' ? data.filesProcessed : 
+                             (typeof data.current === 'number' ? data.current : 0),
+              totalFiles: typeof data.totalFiles === 'number' ? data.totalFiles : 
+                         (typeof data.total === 'number' ? data.total : 0),
+              progressPercentage: typeof data.progressPercentage === 'number' ? data.progressPercentage : 
+                                  (typeof data.percentage === 'number' ? data.percentage : 
+                                  (data.totalFiles > 0 ? (data.filesProcessed / data.totalFiles) * 100 : 
+                                  (data.total > 0 ? (data.current / data.total) * 100 : 0))),
+              currentFile: data.currentFile || data.fileName || '',
               status: data.status || 'running',
-              timestamp: data.timestamp || Date.now()
+              timestamp: data.timestamp || Date.now(),
+              speed: data.speed,
+              operationType: data.operationType || 
+                            (data.batch_id && data.batch_id.includes('-') ? data.batch_id.split('-')[0] : null)
             };
             
+            // Always update the current progress
+            console.log('🔄 Updating progress state:', newProgress);
             setWsProgress(newProgress);
             
-            // Check if operation is completed or failed - handle with a small delay to ensure UI updates first
-            if (data.status === 'completed') {
-              console.log('Operation completed successfully');
-              // Use setTimeout to ensure the UI updates before calling finishProgress
-              setTimeout(() => finishProgress(), 100);
+            // Check if operation is completed or failed
+            if (data.status === 'completed' || 
+                (newProgress.progressPercentage >= 100 && newProgress.filesProcessed >= newProgress.totalFiles)) {
+              console.log('✅ Operation completed successfully');
+              setTimeout(() => finishProgress(), 1000);
             } else if (data.status === 'failed') {
-              console.error('Operation failed:', data.error);
+              console.error('❌ Operation failed:', data.error);
             }
+          } else if (data.type === 'pong') {
+            // Just update connection status on pong
+            setConnectionStatus('connected');
+          } else {
+            // Log other message types for debugging
+            console.log(`📥 WebSocket message with unknown format:`, data);
           }
-          // Don't log pong messages
         } catch (err) {
-          // Silence parsing errors to reduce console spam
+          console.error('Error processing WebSocket message:', err, event.data);
         }
       };
 
@@ -181,9 +318,7 @@ export const WebSocketProgressBar: React.FC<WebSocketProgressBarProps> = ({
           reconnectTimeoutRef.current = setTimeout(() => {
             reconnectAttempts.current++;
             // Try to get the latest port before reconnecting
-            getWebSocketPort().then(port => {
-              connectWebSocket(port);
-            });
+            connectWebSocket(8765);
           }, delay);
         }
       };
@@ -197,7 +332,20 @@ export const WebSocketProgressBar: React.FC<WebSocketProgressBarProps> = ({
     } catch (error) {
       setConnectionStatus('disconnected');
     }
-  }, [connectionStatus, wsProgress]);
+  }, [connectionStatus, wsProgress, progressState.batchId]);
+
+  // Re-register for new batchId if it changes and WebSocket is open
+  useEffect(() => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      const batchId = progressState.batchId || wsProgress?.batch_id || 'unknown';
+      console.log(`[WS] Re-registering for new batchId: ${batchId}`);
+      wsRef.current.send(JSON.stringify({
+        type: 'register',
+        batch_id: batchId,
+        client_type: 'operation_progress'
+      }));
+    }
+  }, [progressState.batchId]);
 
   const disconnectWebSocket = () => {
     if (reconnectTimeoutRef.current) {
@@ -212,28 +360,21 @@ export const WebSocketProgressBar: React.FC<WebSocketProgressBarProps> = ({
     setConnectionStatus('disconnected');
   };
 
+  // Ensure cancel always works for the current batchId
   const handleCancel = async () => {
-    if (!wsProgress?.batch_id || isCancelling) return;
-    
+    const batchId = progressState.batchId || wsProgress?.batch_id;
+    if (!batchId || isCancelling) return;
     setIsCancelling(true);
-    
     try {
-      console.log('🛑 Cancelling operation:', wsProgress.batch_id);
-      
-      // Call the backend to cancel the operation
-      const response = await window.electronAPI.cancelOperation(wsProgress.batch_id);
+      console.log('🛑 Cancelling operation:', batchId);
+      const response = await window.electronAPI.cancelOperation(batchId);
       console.log('🔍 Cancel response:', response);
-      
       if (response && (response.success || response.message?.includes('cancelled'))) {
-        console.log('✅ Operation cancelled successfully');
-        // Force update the status immediately
-        setWsProgress(prev => prev ? { ...prev, status: 'cancelled' } : null);
+        setWsProgress((prev: ProgressData | null) => prev ? { ...prev, status: 'cancelled' } : null);
       } else {
-        console.error('❌ Failed to cancel operation:', response);
         setIsCancelling(false);
       }
     } catch (error) {
-      console.error('❌ Error cancelling operation:', error);
       setIsCancelling(false);
     }
   };
@@ -248,23 +389,43 @@ export const WebSocketProgressBar: React.FC<WebSocketProgressBarProps> = ({
 
   // Connect when component mounts or when progress becomes active
   useEffect(() => {
-    if (progressState.isActive) {
-      // Get the WebSocket port and then connect
-      getWebSocketPort().then(port => {
-        connectWebSocket(port);
-      });
-    } else {
-      disconnectWebSocket();
-    }
+    // Always try to connect when component mounts, regardless of progress state
+    // This ensures we can receive updates even before a specific operation starts
+    console.log('WebSocketProgressBar mounted or progress state changed:', { 
+      isActive: progressState.isActive, 
+      wsProgress: wsProgress?.batch_id || 'none' 
+    });
+    
+    // Always attempt to connect to receive any available progress updates
+    connectWebSocket(8765);
+
+    // Set up a regular reconnect interval to ensure we maintain connection
+    const reconnectInterval = setInterval(() => {
+      if (connectionStatus !== 'connected') {
+        console.log('Reconnection interval triggered - attempting to reconnect...');
+        connectWebSocket(8765);
+      }
+    }, 10000); // Try reconnecting every 10 seconds if not connected
 
     return () => {
+      clearInterval(reconnectInterval);
       disconnectWebSocket();
     };
   }, [progressState.isActive]);
+  
+  // Add debugging logging for state changes
+  useEffect(() => {
+    console.log('Progress state changed:', progressState);
+  }, [progressState]);
+  
+  useEffect(() => {
+    if (wsProgress) {
+      console.log('WebSocket progress updated:', wsProgress);
+    }
+  }, [wsProgress]);
 
   // Show progress bar if either store state is active OR we have WebSocket data
   const shouldShow = progressState.isActive || wsProgress !== null;
-  
   if (!shouldShow) {
     return null;
   }
@@ -292,9 +453,9 @@ export const WebSocketProgressBar: React.FC<WebSocketProgressBarProps> = ({
   const getStatusIcon = () => {
     if (displayData.status === 'completed') return '✅';
     if (displayData.status === 'cancelled') return '🛑';
-    if (displayData.status === 'running') return '🔄';
+    if (displayData.status === 'running') return icons.loading;
     if (connectionStatus === 'connecting') return '⏳';
-    if (connectionStatus === 'disconnected') return '⚠️';
+    if (connectionStatus === 'disconnected') return icons.alert;
     return '📊';
   };
 
@@ -305,13 +466,6 @@ export const WebSocketProgressBar: React.FC<WebSocketProgressBarProps> = ({
     if (displayData.status === 'running') return 'Processing';
     if (connectionStatus === 'connecting') return 'Connecting...';
     if (connectionStatus === 'disconnected') return 'Disconnected';
-    return 'Starting...';
-  };
-
-  const getCurrentFileName = () => {
-    if (!displayData.currentFile) return '';
-    const fileName = displayData.currentFile.split(/[/\\]/).pop() || '';
-    return fileName.length > 40 ? `...${fileName.slice(-37)}` : fileName;
   };
 
   const canCancel = displayData.status === 'running' && !isCancelling && displayData.batch_id !== 'unknown';
@@ -323,10 +477,23 @@ export const WebSocketProgressBar: React.FC<WebSocketProgressBarProps> = ({
           <span className="progress-operation">{getStatusText()}</span>
           <span className="progress-percentage">{displayData.progressPercentage.toFixed(1)}%</span>
         </div>
-        <div className="progress-bar">
+        <div className="progress-bar" style={{ 
+          height: '8px', 
+          background: '#333',
+          borderRadius: '4px',
+          overflow: 'hidden',
+          margin: '4px 0',
+          position: 'relative'
+        }}>
           <div 
             className="progress-fill"
-            style={{ width: `${Math.min(displayData.progressPercentage, 100)}%` }}
+            style={{ 
+              width: `${Math.min(displayData.progressPercentage, 100)}%`,
+              height: '100%',
+              background: '#007ACC',
+              transition: 'width 0.3s ease',
+              borderRadius: '4px'
+            }}
           />
         </div>
       </div>
@@ -334,9 +501,9 @@ export const WebSocketProgressBar: React.FC<WebSocketProgressBarProps> = ({
   }
 
   return (
-    <div className={`progress-container ${className}`}>
+    <div className={`progress-container ${className}`} style={{ position: 'relative' }}>
       {/* Header with Status and Controls */}
-      <div className="progress-header">
+      <div className="progress-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div className="progress-info">
           <span className="progress-operation">
             {getStatusIcon()} {getStatusText()}
@@ -348,81 +515,180 @@ export const WebSocketProgressBar: React.FC<WebSocketProgressBarProps> = ({
             <span className="progress-stats offline">(Offline Mode)</span>
           )}
         </div>
-        
-        <div className="progress-controls">
-          {/* Minimize Button */}
+        <div className="progress-controls" style={{ display: 'flex', gap: '8px' }}>
           {onToggleMinimize && (
-            <button
+            <button 
+              className="control-button minimize"
               onClick={onToggleMinimize}
-              className="button small secondary"
-              title="Minimize progress bar"
+              aria-label="Minimize progress bar"
+              style={{
+                width: 28,
+                height: 28,
+                borderRadius: '50%',
+                background: '#222',
+                color: '#fff',
+                border: 'none',
+                fontSize: 18,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                boxShadow: '0 1px 4px rgba(0,0,0,0.12)',
+                cursor: 'pointer',
+                transition: 'background 0.2s',
+                marginRight: 2
+              }}
+              onMouseOver={e => (e.currentTarget.style.background = '#444')}
+              onMouseOut={e => (e.currentTarget.style.background = '#222')}
             >
-              −
+              {/* Modern minimize icon */}
+              <span style={{ fontWeight: 700, fontSize: 18, lineHeight: 1 }}>–</span>
             </button>
           )}
-          
-          {/* Cancel Button */}
-          {canCancel && (
-            <button
-              onClick={handleCancel}
-              disabled={isCancelling}
-              className="button small danger"
-              title="Cancel operation"
-            >
-              {isCancelling ? 'Cancelling...' : 'Cancel'}
-            </button>
-          )}
-          
-          {/* Close Button */}
-          <button
+          <button 
+            className="control-button close"
             onClick={handleClose}
-            className="button small secondary"
-            title="Close progress bar"
+            aria-label="Close progress bar"
+            style={{
+              width: 28,
+              height: 28,
+              borderRadius: '50%',
+              background: '#222',
+              color: '#fff',
+              border: 'none',
+              fontSize: 18,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              boxShadow: '0 1px 4px rgba(0,0,0,0.12)',
+              cursor: 'pointer',
+              transition: 'background 0.2s',
+            }}
+            onMouseOver={e => (e.currentTarget.style.background = '#c00')}
+            onMouseOut={e => (e.currentTarget.style.background = '#222')}
           >
-            ✕
+            {/* Modern close icon */}
+            <span style={{ fontWeight: 700, fontSize: 18, lineHeight: 1 }}>×</span>
           </button>
         </div>
       </div>
 
-      {/* Visual Progress Bar Container */}
-      <div className="progress-visual-container">
-        <div className="progress-bar">
-          <div 
-            className="progress-fill"
-            style={{ width: `${Math.min(displayData.progressPercentage, 100)}%` }}
-          />
-        </div>
-        
-        <div className="progress-percentage">
+      {/* Progress Bar with Cancel Button overlayed at the end */}
+      <div className="progress-bar" style={{ 
+        height: '12px', 
+        background: '#333',
+        borderRadius: '6px',
+        overflow: 'hidden',
+        margin: '5px 0',
+        position: 'relative'
+      }}>
+        <div 
+          className={`progress-fill ${displayData.status === 'completed' ? 'completed' : ''}`}
+          style={{ 
+            width: `${Math.min(displayData.progressPercentage, 100)}%`,
+            height: '100%',
+            background: '#007ACC',
+            transition: 'width 0.3s ease',
+            borderRadius: '6px',
+            position: 'relative',
+            textAlign: 'center',
+            color: '#fff',
+            fontSize: '10px',
+            lineHeight: '12px'
+          }}
+        >
           {displayData.progressPercentage.toFixed(1)}%
         </div>
-      </div>
-      
-      {/* Progress Details */}
-      <div className="progress-details">
-        <div className="progress-stats">
-          {displayData.filesProcessed} of {displayData.totalFiles} files processed
-        </div>
-        
-        {displayData.currentFile && (
-          <div className="progress-current-file">
-            <span className="progress-file-label">Currently Processing:</span>
-            <span className="progress-file-name">
-              {getCurrentFileName()}
-            </span>
-          </div>
+        {/* Small Cancel button at the end of the bar */}
+        {canCancel && (
+          <button
+            className="cancel-button"
+            onClick={handleCancel}
+            disabled={isCancelling}
+            aria-label="Cancel operation"
+            style={{
+              position: 'absolute',
+              right: 4,
+              top: '50%',
+              transform: 'translateY(-50%)',
+              height: 22,
+              minWidth: 60,
+              padding: '0 10px',
+              fontSize: 13,
+              background: '#c00',
+              color: '#fff',
+              border: 'none',
+              borderRadius: 11,
+              boxShadow: '0 1px 4px rgba(0,0,0,0.10)',
+              cursor: 'pointer',
+              zIndex: 2,
+              transition: 'background 0.2s',
+            }}
+            onMouseOver={e => (e.currentTarget.style.background = '#a00')}
+            onMouseOut={e => (e.currentTarget.style.background = '#c00')}
+          >
+            {isCancelling ? 'Cancelling...' : 'Cancel'}
+          </button>
         )}
       </div>
 
-      {/* Connection Status */}
-      {connectionStatus !== 'connected' && progressState.isActive && wsProgress === null && (
-        <div className="progress-connection-status">
-          ⚡ {connectionStatus === 'connecting' 
-            ? 'Establishing real-time connection...' 
-            : 'Using fallback mode - progress may be delayed'
-          }
+      {/* File Information - Current File box styled */}
+      <div className="progress-details" style={{ display: 'flex', alignItems: 'center', marginTop: 6 }}>
+        <div className="file-info" style={{
+          background: '#181a1b',
+          color: '#fff',
+          borderRadius: 6,
+          padding: '6px 18px',
+          minWidth: 320,
+          minHeight: 28,
+          fontSize: 15,
+          fontWeight: 500,
+          display: 'flex',
+          alignItems: 'center',
+          marginRight: 18,
+          boxShadow: '0 1px 4px rgba(0,0,0,0.10)'
+        }}>
+          {displayData.currentFile && (
+            <>
+              <span className="file-label" style={{ color: '#aaa', fontWeight: 400, marginRight: 8 }}>Current File:</span>
+              <span className="file-name" style={{ color: '#fff', fontWeight: 600 }}>{getCurrentFileName(displayData.currentFile)}</span>
+            </>
+          )}
         </div>
-      )}
+        <div className="file-counter" style={{ color: '#fff', fontSize: 14, marginRight: 12 }}>
+          {displayData.filesProcessed} / {displayData.totalFiles} files
+        </div>
+        {/* Speed indicator if available */}
+        {displayData.speed !== undefined && (
+          <div className="file-speed" style={{ color: '#fff', fontSize: 13, marginRight: 12 }}>
+            {formatSpeed(displayData.speed)}
+          </div>
+        )}
+      </div>
     </div>
+  );
+};
+
+export const ProgressBarTrigger: React.FC = () => {
+  const { show, isTriggerVisible } = useProgressBarTrigger();
+  if (!isTriggerVisible) return null;
+  return (
+    <button
+      style={{
+        marginLeft: 8,
+        background: '#007ACC',
+        color: '#fff',
+        border: 'none',
+        borderRadius: 6,
+        padding: '6px 14px',
+        fontWeight: 600,
+        fontSize: 15,
+        cursor: 'pointer',
+        boxShadow: '0 1px 4px rgba(0,0,0,0.10)'
+      }}
+      onClick={show}
+      aria-label="Show Progress Bar"
+    >
+      Show Progress
+    </button>
   );
 }; 

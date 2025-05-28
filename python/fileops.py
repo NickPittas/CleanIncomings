@@ -5,39 +5,81 @@ import uuid
 import json
 import time
 import threading
-from typing import List, Dict, Any, Optional
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import queue
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import List, Dict, Any, Optional, Set, Tuple
 
-# Import WebSocket progress functionality
+# Import the progress monitoring system
 try:
-    from .progress_server import send_progress_update, start_progress_server
+    from progress_server import (
+        start_progress_server,
+        send_progress_update,
+        stop_progress_server,
+        check_server_health
+    )
     WEBSOCKET_AVAILABLE = True
+    
+    # Add compatibility functions
+    def is_server_running():
+        """Check if server is running"""
+        health = check_server_health()
+        return health.get('running', False)
+        
+    def open_progress_viewer():
+        """Open progress viewer (not implemented in progress_server)"""
+        print("[INFO] Progress viewer not available with progress_server", file=sys.stderr)
+        
 except ImportError:
-    try:
-        from progress_server import send_progress_update, start_progress_server
-        WEBSOCKET_AVAILABLE = True
-    except ImportError:
-        WEBSOCKET_AVAILABLE = False
-        print("[WARNING] WebSocket progress server not available", file=sys.stderr)
+    WEBSOCKET_AVAILABLE = False
+    print("[WARNING] WebSocket progress server not available", file=sys.stderr)
 
 
 class FileOperations:
     """Handles file move/copy operations, conflict detection, and progress tracking."""
 
-    def __init__(self):
+    def __init__(self, start_websocket=False, debug_mode=False, show_progress=False):
+        """Initialize FileOperations
+        
+        Args:
+            start_websocket: Whether to start the WebSocket server
+            debug_mode: Enable additional debug logging
+            show_progress: Open the progress viewer in browser
+        """
+        self.debug_mode = debug_mode
         self.progress_dir = os.path.join(os.path.dirname(__file__), "_progress")
         os.makedirs(self.progress_dir, exist_ok=True)
         self.cancelled_operations = set()  # Track cancelled batch IDs
         self.active_threads = {}  # Track active operation threads for force-kill
+        self.use_websocket = WEBSOCKET_AVAILABLE
         
-        # Start WebSocket server if available
-        if WEBSOCKET_AVAILABLE:
-            try:
-                start_progress_server()
-                print("[INFO] WebSocket progress server started", file=sys.stderr)
-            except Exception as e:
-                print(f"[WARNING] Failed to start WebSocket server: {e}", file=sys.stderr)
+        if self.debug_mode:
+            print("[DEBUG] FileOperations initialized with debug mode", file=sys.stderr)
+            print(f"[DEBUG] Progress directory: {self.progress_dir}", file=sys.stderr)
+        
+        # Start WebSocket server only if explicitly requested
+        if start_websocket and WEBSOCKET_AVAILABLE:
+            # Check if server is already running
+            if is_server_running():
+                print("[INFO] WebSocket progress server is already running", file=sys.stderr)
+                if show_progress:
+                    open_progress_viewer()
+            else:
+                try:
+                    print("[INFO] Starting WebSocket progress server...", file=sys.stderr)
+                    success = start_progress_server()
+                    if success:
+                        print("[INFO] WebSocket progress server started successfully", file=sys.stderr)
+                        if show_progress:
+                            open_progress_viewer()
+                    else:
+                        print("[WARNING] WebSocket server failed to start", file=sys.stderr)
+                except Exception as e:
+                    print(f"[WARNING] Failed to start WebSocket server: {e}", file=sys.stderr)
+                    self.use_websocket = False
+        else:
+            if self.debug_mode:
+                reason = "not requested" if not start_websocket else "not available"
+                print(f"[DEBUG] WebSocket server not started ({reason})", file=sys.stderr)
 
     def _progress_path(self, batch_id: str) -> str:
         return os.path.join(self.progress_dir, f"progress_{batch_id}.json")
@@ -232,6 +274,20 @@ class FileOperations:
         """
         import threading
         
+        print(f"[MULTITHREAD] _multithreaded_copy called with src={src}, dst={dst}", file=sys.stderr)
+        # Verify source file exists
+        if not os.path.exists(src):
+            raise FileNotFoundError(f"Source file does not exist: {src}")
+        
+        # Verify destination directory exists
+        dst_dir = os.path.dirname(dst)
+        if not os.path.exists(dst_dir):
+            raise FileNotFoundError(f"Destination directory does not exist: {dst_dir}")
+        
+        # Verify write permissions to destination directory
+        if not os.access(dst_dir, os.W_OK):
+            raise PermissionError(f"No write permission to destination directory: {dst_dir}")
+        
         # Check for cancellation before starting
         if batch_id and self.is_cancelled(batch_id):
             raise Exception(f"Operation cancelled before copying {src}")
@@ -241,7 +297,16 @@ class FileOperations:
         
         # For small files (< 10MB), use single-threaded copy
         if file_size < 10 * 1024 * 1024:
-            return self._force_kill_copy(src, dst, batch_id)
+            print(f"[MULTITHREAD] Small file detected ({file_size} bytes), using simple copy method", file=sys.stderr)
+            try:
+                # Try a direct shutil copy first for maximum compatibility
+                print(f"[MULTITHREAD] Attempting direct shutil copy for small file", file=sys.stderr)
+                shutil.copy2(src, dst)
+                print(f"[MULTITHREAD] Direct copy succeeded using shutil.copy2", file=sys.stderr)
+                return
+            except Exception as direct_copy_error:
+                print(f"[WARNING] Direct copy failed, falling back to _force_kill_copy: {direct_copy_error}", file=sys.stderr)
+                return self._force_kill_copy(src, dst, batch_id)
         
         # Calculate optimal chunk size for 10G network
         # Target: 64MB chunks for large files, minimum 1MB
@@ -334,9 +399,12 @@ class FileOperations:
                 
                 for future in as_completed(futures):
                     try:
+                        print(f"[DEBUG] Processing result from future {future}", file=sys.stderr)
                         future.result()  # This will raise any exception from the chunk
                     except Exception as e:
-                        print(f"[MULTITHREAD] Chunk operation failed: {e}", file=sys.stderr)
+                        print(f"[ERROR] Chunk operation failed: {e}", file=sys.stderr)
+                        import traceback
+                        traceback.print_exc(file=sys.stderr)
                         failed_chunks += 1
                         # Cancel all other operations
                         for event in cancel_events:
@@ -363,21 +431,37 @@ class FileOperations:
                 print(f"[MULTITHREAD] All {completed_chunks} chunks completed, reassembling file...", file=sys.stderr)
                 
                 # Reassemble the file from chunks
+            print(f"[MULTITHREAD] Reassembling file from {num_chunks} chunks", file=sys.stderr)
+            try:
                 with open(dst, 'wb') as fdst:
                     for i in range(num_chunks):
                         chunk_file = f"{dst}.chunk_{i}"
+                        print(f"[MULTITHREAD] Processing chunk {i}, file: {chunk_file}", file=sys.stderr)
                         if os.path.exists(chunk_file):
+                            chunk_size = os.path.getsize(chunk_file)
+                            print(f"[MULTITHREAD] Chunk {i} exists, size: {chunk_size} bytes", file=sys.stderr)
                             with open(chunk_file, 'rb') as chunk_src:
-                                shutil.copyfileobj(chunk_src, fdst)
+                                bytes_written = shutil.copyfileobj(chunk_src, fdst)
+                                print(f"[MULTITHREAD] Chunk {i} written to destination", file=sys.stderr)
                         else:
+                            print(f"[CRITICAL] Missing chunk file: {chunk_file}", file=sys.stderr)
                             raise Exception(f"Missing chunk file: {chunk_file}")
+                print(f"[MULTITHREAD] All chunks successfully reassembled", file=sys.stderr)
+            except Exception as reassembly_error:
+                print(f"[CRITICAL] Failed to reassemble file: {reassembly_error}", file=sys.stderr)
+                # If destination file was created but incomplete, remove it
+                if os.path.exists(dst):
+                    try:
+                        os.remove(dst)
+                        print(f"[MULTITHREAD] Removed incomplete destination file: {dst}", file=sys.stderr)
+                    except Exception as cleanup_error:
+                        print(f"[WARNING] Failed to clean up incomplete file: {cleanup_error}", file=sys.stderr)
+                raise
                 
                 # Verify the final file
                 final_size = os.path.getsize(dst)
                 if final_size != file_size:
                     raise Exception(f"Size mismatch after reassembly: expected {file_size}, got {final_size}")
-                
-                print(f"[MULTITHREAD] File reassembled successfully: {final_size} bytes", file=sys.stderr)
         
         finally:
             # Clean up temporary chunk files
@@ -407,6 +491,7 @@ class FileOperations:
         max_workers: int = 8,
         file_workers: int = 4
     ) -> Dict[str, Any]:
+        print(f"[DEBUG] apply_mappings_multithreaded called with operation_type={operation_type}, {len(mappings)} mappings", file=sys.stderr)
         """
         Apply file move/copy operations using multithreading for maximum 10G network utilization.
         
@@ -418,6 +503,8 @@ class FileOperations:
             max_workers: Maximum worker threads for file chunks (default 8)
             file_workers: Maximum concurrent files to process (default 4)
         """
+        print(f"[DEBUG] Starting apply_mappings_multithreaded with {len(mappings)} mappings", file=sys.stderr)
+        print(f"[DEBUG] Operation type: {operation_type}", file=sys.stderr)
         if batch_id is None:
             batch_id = str(uuid.uuid4())
         
@@ -456,6 +543,7 @@ class FileOperations:
         }
         
         # Calculate total size
+        print(f"[DEBUG] Calculating total size for {len(mappings)} mappings", file=sys.stderr)
         for m in mappings:
             node = m.get("node") or m.get("sequence", {})
             if node:
@@ -464,6 +552,8 @@ class FileOperations:
                 else:
                     progress["totalSize"] += node.get("size", 0)
         
+        print(f"[DEBUG] Total size: {progress['totalSize']} bytes", file=sys.stderr)
+        print(f"[DEBUG] Writing initial progress for batch {batch_id}", file=sys.stderr)
         self._write_progress(batch_id, progress)
         results = []
         results_lock = threading.Lock()
@@ -490,13 +580,28 @@ class FileOperations:
                 
                 self._write_progress(batch_id, progress)
                 
-                if WEBSOCKET_AVAILABLE:
+                # Send WebSocket progress update if available and enabled
+                if WEBSOCKET_AVAILABLE and self.use_websocket:
                     try:
+                        # Get current file and ensure it's a string
+                        current_file = progress.get("currentFile", "")
+                        if current_file is None:
+                            current_file = ""
+                        
+                        # Calculate speed if possible
+                        speed_mb_s = None
+                        if "startTime" in progress and "processedSize" in progress:
+                            elapsed = time.time() - progress["startTime"]
+                            if elapsed > 0:
+                                bytes_per_sec = progress["processedSize"] / elapsed
+                                speed_mb_s = bytes_per_sec / (1024 * 1024)  # Convert to MB/s
+                            
+                        # Send update with improved error handling
                         send_progress_update(
                             batch_id=batch_id,
                             files_processed=files_processed,
                             total_files=total_files,
-                            current_file=progress.get("currentFile", ""),
+                            current_file=current_file,
                             status=progress.get("status", "running")
                         )
                     except Exception as e:
@@ -516,13 +621,38 @@ class FileOperations:
                     progress["currentFile"] = src_file
                 
                 # Ensure destination directory exists
-                os.makedirs(os.path.dirname(dst_file), exist_ok=True)
-                
+                dst_dir = os.path.dirname(dst_file)
+                print(f"[MULTITHREAD] Creating destination directory: {dst_dir}", file=sys.stderr)
+                try:
+                    os.makedirs(dst_dir, exist_ok=True)
+                    print(f"[MULTITHREAD] Destination directory created/verified successfully", file=sys.stderr)
+                except Exception as dir_error:
+                    print(f"[CRITICAL] Failed to create destination directory {dst_dir}: {dir_error}", file=sys.stderr)
+                    raise
+        
                 print(f"[MULTITHREAD] Processing file: {file_name} ({file_size} bytes)", file=sys.stderr)
                 
                 if operation_type == "copy":
                     # Use multithreaded copy for large files
-                    self._multithreaded_copy(src_file, dst_file, batch_id, max_workers)
+                    print(f"[MULTITHREAD] Starting COPY operation from {src_file} to {dst_file}", file=sys.stderr)
+                    
+                    # Ensure paths are properly formatted and normalized
+                    src_norm = os.path.normpath(src_file)
+                    dst_norm = os.path.normpath(dst_file)
+                    print(f"[MULTITHREAD] Normalized paths - src: {src_norm}, dst: {dst_norm}", file=sys.stderr)
+                    
+                    try:
+                        self._multithreaded_copy(src_norm, dst_norm, batch_id, max_workers)
+                        print(f"[MULTITHREAD] COPY operation completed successfully", file=sys.stderr)
+                        
+                        # Double-check that file was actually copied
+                        if not os.path.exists(dst_norm):
+                            print(f"[CRITICAL] Copy reported success but destination file doesn't exist: {dst_norm}", file=sys.stderr)
+                            raise FileNotFoundError(f"Destination file not created: {dst_norm}")
+                            
+                    except Exception as copy_error:
+                        print(f"[CRITICAL] COPY operation failed with error: {copy_error}", file=sys.stderr)
+                        raise
                     
                     # Verify copy
                     if not os.path.exists(dst_file):
@@ -557,22 +687,53 @@ class FileOperations:
             """Process a single mapping (which may contain multiple files for sequences)"""
             nonlocal completed, failed
             
+            mapping_id = mapping.get('id', 'unknown-id')
+            print(f"[DEBUG] Starting process_mapping with ID: {mapping_id}", file=sys.stderr)
+            
             try:
                 if self.is_cancelled(batch_id):
-                    return {"success": False, "error": "Operation cancelled"}
+                    print(f"[DEBUG] Operation cancelled for mapping {mapping_id}", file=sys.stderr)
+                    return {"id": mapping_id, "success": False, "error": "Operation cancelled"}
                 
+                # Get source and target paths, ensuring they're present
                 src = mapping.get("sourcePath")
                 dst = mapping.get("targetPath")
                 
+                if not src:
+                    print(f"[ERROR] Missing source path in mapping {mapping_id}", file=sys.stderr)
+                    return {"id": mapping_id, "success": False, "error": "Missing source path"}
+                    
+                if not dst:
+                    print(f"[ERROR] Missing target path in mapping {mapping_id}", file=sys.stderr)
+                    return {"id": mapping_id, "success": False, "error": "Missing target path"}
+                    
+                # Normalize paths
+                src = os.path.normpath(src)
+                dst = os.path.normpath(dst)
+                
+                print(f"[DEBUG] Processing mapping - src: {src}", file=sys.stderr)
+                print(f"[DEBUG] Processing mapping - dst: {dst}", file=sys.stderr)
+                
                 if mapping.get("type") == "sequence" and "sequence" in mapping:
                     # Handle sequence - process files in parallel
+                    print(f"[DEBUG] Handling sequence mapping", file=sys.stderr)
                     seq_info = mapping["sequence"]
+                    print(f"[DEBUG] Sequence info keys: {seq_info.keys() if isinstance(seq_info, dict) else 'Not a dict'}", file=sys.stderr)
+                    
                     actual_files = seq_info.get("files", [])
+                    print(f"[DEBUG] Found {len(actual_files)} files in sequence", file=sys.stderr)
                     
                     if not actual_files:
+                        print(f"[DEBUG] No files found in sequence, returning error", file=sys.stderr)
                         return {"id": mapping.get("id"), "success": False, "error": "No files found in sequence"}
                     
                     dst_dir = os.path.dirname(dst)
+                    print(f"[DEBUG] Destination directory: {dst_dir}", file=sys.stderr)
+                    
+                    # Print first few files for debugging
+                    for i, file_info in enumerate(actual_files[:3]):
+                        print(f"[DEBUG] File {i+1} info: path={file_info.get('path')}, name={file_info.get('name')}, size={file_info.get('size')}", file=sys.stderr)
+                    
                     frames_processed = 0
                     
                     print(f"[MULTITHREAD] Processing sequence with {len(actual_files)} files", file=sys.stderr)
@@ -734,10 +895,13 @@ class FileOperations:
                             progress["totalSize"] += m.get("sequence", {}).get("total_size", 0)
                         else:
                             progress["totalSize"] += node.get("size", 0)
-                self._write_progress(batch_id, progress)
-            else:
-                # Update existing progress to running status
+                            
+                # Reset progress state
                 progress["status"] = "running"
+                progress["isCancelled"] = False
+                progress["isPaused"] = False
+                progress["startTime"] = time.time()
+                progress["processedSize"] = 0
                 self._write_progress(batch_id, progress)
         except Exception:
             # Fallback to creating new progress
@@ -756,7 +920,9 @@ class FileOperations:
                 "currentFile": None,
                 "totalFiles": total_files,
                 "filesProcessed": 0,
+                "startTime": time.time()
             }
+            
             # Calculate total size
             for m in mappings:
                 node = m.get("node") or m.get("sequence", {})
@@ -766,6 +932,7 @@ class FileOperations:
                     else:
                         progress["totalSize"] += node.get("size", 0)
             self._write_progress(batch_id, progress)
+        
         results = []
         
         def update_progress_with_files():
@@ -1216,9 +1383,54 @@ class FileOperations:
 
     def _write_progress(self, batch_id: str, progress: Dict[str, Any]):
         try:
+            # Calculate percentage properly before writing to file
+            files_processed = progress.get("filesProcessed", 0)
+            total_files = progress.get("totalFiles", 0)
+            
+            # Properly calculate percentage
+            if total_files > 0:
+                percentage = (files_processed / total_files) * 100
+            else:
+                percentage = 0
+                
+            # Ensure percentage is properly set in progress data
+            progress["percentage"] = percentage
+            
+            # Write progress to file
             progress_path = self._progress_path(batch_id)
             with open(progress_path, "w", encoding="utf-8") as f:
                 json.dump(progress, f)
+            
+            # Send progress update via WebSocket
+            if self.use_websocket and WEBSOCKET_AVAILABLE:
+                try:
+                    # Extract required fields for WebSocket update
+                    current_file = progress.get("currentFile", "")
+                    status = progress.get("status", "running")
+                    
+                    # Get operation type from batch_id prefix
+                    operation_type = "unknown"
+                    if '-' in batch_id:
+                        operation_type = batch_id.split('-')[0]
+                    
+                    # Send extra fields like speed and file size
+                    extra_data = {}
+                    for key in ["processedSize", "totalSize", "speed", "remainingTime", "error", "warnings"]:
+                        if key in progress:
+                            extra_data[key] = progress[key]
+                    
+                    # Call the WebSocket progress update function
+                    print(f"[WEBSOCKET] Sending progress update for batch {batch_id}: {files_processed}/{total_files} ({percentage:.1f}%)", file=sys.stderr)
+                    send_progress_update(
+                        batch_id=batch_id,
+                        files_processed=files_processed,
+                        total_files=total_files,
+                        current_file=current_file,
+                        status=status
+                    )
+                except Exception as ws_error:
+                    # Don't fail the whole operation if WebSocket update fails
+                    print(f"[WARNING] Failed to send WebSocket progress update: {ws_error}", file=sys.stderr)
         except Exception as e:
             print(f"[ERROR] Failed to write progress: {e}", file=sys.stderr)
             import traceback

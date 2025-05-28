@@ -2,6 +2,7 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { resolve, join } from 'path'
 import { writeFileSync } from 'fs'
+import { AddressInfo } from 'net'
 
 export default defineConfig({
   plugins: [
@@ -53,6 +54,13 @@ export default defineConfig({
   build: {
     outDir: 'dist/renderer',
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks: undefined,
+        inlineDynamicImports: true
+      }
+    },
+    chunkSizeWarningLimit: 1000
   },
   resolve: {
     alias: {

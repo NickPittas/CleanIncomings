@@ -1,10 +1,27 @@
 import os
 import sys
-import json
 import re
 import uuid
+from typing import Dict, List, Any, Optional
+import time
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Tuple
+
+# Import the progress monitoring system
+try:
+    from progress_server import (
+        check_server_health
+    )
+    WEBSOCKET_AVAILABLE = True
+
+    # Check if server is running
+    def is_server_running():
+        """Check if server is running"""
+        health = check_server_health()
+        return health.get('running', False)
+
+except ImportError:
+    WEBSOCKET_AVAILABLE = False
+    print("[WARNING] WebSocket progress server not available", file=sys.stderr)
 
 
 class MappingGenerator:
@@ -27,179 +44,54 @@ class MappingGenerator:
         ]
         self.project_types = self.config.get("projectTypes", {})
         self.max_depth = 10
+        self.current_frame_numbers = []  # Initialize frame numbers storage
 
-    def _load_config(self, config_path: str) -> Dict[str, Any]:
-        try:
-            with open(config_path, "r", encoding="utf-8") as f:
-                config = json.load(f)
-                print(f"Loaded patterns config from: {config_path}", file=sys.stderr)
-                return config
-        except Exception as e:
-            print(f"Failed to load config from {config_path}: {e}", file=sys.stderr)
-            print("Using fallback patterns", file=sys.stderr)
-            return {
-                "shotPatterns": ["DEMO\\d{4}", "FULL\\d{4}", "ANOT\\d{4}", "\\d{3,4}"],
-                "taskPatterns": {
-                    "comp": ["comp", "composite"],
-                    "vfx": ["vfx", "effects"],
-                    "footage": ["footage", "plates"],
-                },
-                "resolutionPatterns": ["2k", "4k", "hd", "proxy"],
-                "versionPatterns": ["v\\d{3}", "_v\\d{2,3}"],
-                "projectTypes": {
-                    "sphere": {"vfxFolder": "04_vfx", "compFolder": "05_comp"},
-                    "internal": {"footageFolder": "footage", "3dFolder": "3d"},
-                },
-            }
+    # Import utility functions from mapping_utils
+    from mapping_utils.config_loader import load_config
+    from mapping_utils.shot_extractor import extract_shot_simple
+    from mapping_utils.task_extractor import extract_task_simple
+    from mapping_utils.version_extractor import extract_version_simple
+    from mapping_utils.resolution_extractor import extract_resolution_simple
+    from mapping_utils.asset_extractor import extract_asset_simple
+    from mapping_utils.stage_extractor import extract_stage_simple
+    from mapping_utils.progress import update_mapping_progress
 
-    def _extract_shot_simple(self, filename: str, path: str) -> Optional[str]:
-        print(f"  Extracting shot from filename: {filename}", file=sys.stderr)
-        for pattern in self.shot_patterns:
-            match = pattern.search(filename)
-            if match:
-                print(f"    Found shot: {match.group(0)}", file=sys.stderr)
-                return match.group(0)
-        print(f"    No shot found, returning 'unmatched'", file=sys.stderr)
-        return "unmatched"
-
-    def _extract_task_simple(self, filename: str, path: str) -> Optional[str]:
-        print(f"  Extracting task from filename: {filename}", file=sys.stderr)
-        print(f"  Task patterns: {self.task_patterns}", file=sys.stderr)
-        for canonical, patterns in self.task_patterns.items():
-            for pattern in patterns:
-                if re.search(
-                    rf"(?<![a-zA-Z0-9]){re.escape(pattern)}(?![a-zA-Z0-9])",
-                    filename,
-                    re.IGNORECASE,
-                ):
-                    print(
-                        f"    Found task: {canonical} (matched alias: {pattern})",
-                        file=sys.stderr,
-                    )
-                    return canonical
-        print(f"    No task found, returning 'unmatched'", file=sys.stderr)
-        return "unmatched"
-
-    def _extract_version_simple(self, filename: str) -> Optional[str]:
-        # Use a broad regex for v1, v01, v001, v0001, etc.
-        pattern = re.compile(r"[_\.]?v\d{1,6}", re.IGNORECASE)
-        matches = [m.group(0).lstrip("_.") for m in pattern.finditer(filename)]
-        if matches:
-            print(
-                f"    Found version(s): {matches}, using last: {matches[-1]}",
-                file=sys.stderr,
-            )
-            return matches[-1]
-        else:
-            print(f"    No version found, returning 'unmatched'", file=sys.stderr)
-            return "unmatched"
-
-    def _extract_resolution_simple(self, filename: str, path: str) -> Optional[str]:
-        for resolution in self.resolution_patterns:
-            if re.search(re.escape(resolution), filename, re.IGNORECASE):
-                print(f"    Found resolution: {resolution}", file=sys.stderr)
-                return resolution
-        print(f"    No resolution found, returning 'unmatched'", file=sys.stderr)
-        return "unmatched"
-
-    def _extract_asset_simple(self, filename: str) -> Optional[str]:
-        asset_patterns = self.config.get("assetPatterns", [])
-        for asset in asset_patterns:
-            if re.search(
-                rf"(?<![a-zA-Z0-9]){re.escape(asset)}(?![a-zA-Z0-9])",
-                filename,
-                re.IGNORECASE,
-            ):
-                print(f"    Found asset: {asset}", file=sys.stderr)
-                return asset
-        print(f"    No asset found, returning 'unmatched'", file=sys.stderr)
-        return "unmatched"
-
-    def _extract_stage_simple(self, filename: str) -> Optional[str]:
-        stage_patterns = self.config.get("stagePatterns", [])
-        for stage in stage_patterns:
-            if re.search(
-                rf"(?<![a-zA-Z0-9]){re.escape(stage)}(?![a-zA-Z0-9])",
-                filename,
-                re.IGNORECASE,
-            ):
-                print(f"    Found stage: {stage}", file=sys.stderr)
-                return stage
-        print(f"    No stage found, returning 'unmatched'", file=sys.stderr)
-        return "unmatched"
+    # Remove the old method definitions above. Use the imported functions in the
+    # MappingGenerator methods as follows:
+    # Example usage in __init__ and other methods:
+    # self.config = load_config(config_path)
+    # shot = self.extract_shot_simple(filename, path, self.shot_patterns)
+    # task = self.extract_task_simple(filename, path, self.task_patterns)
+    # version = self.extract_version_simple(filename, self.version_patterns)
+    # resolution = self.extract_resolution_simple(
+    #     filename, path, self.resolution_patterns)
+    # asset = self.extract_asset_simple(
+    #     filename, self.config.get("assetPatterns", []))
+    # stage = self.extract_stage_simple(
+    #     filename, self.config.get("stagePatterns", []))
+    # self.update_mapping_progress(
+    #     batch_id, current, total, status, current_file)
 
     def generate_mappings(
-        self, tree: Dict[str, Any], profile: Dict[str, Any]
+        self, tree: Dict[str, Any], profile: Dict[str, Any], batch_id=None, websocket_available=None
     ) -> List[Dict[str, Any]]:
-        print(f"=== SIMPLIFIED MAPPING GENERATION ===", file=sys.stderr)
-        print(f"Profile: {profile.get('name', 'Unknown')}", file=sys.stderr)
-        print(
-            f"VFX Root: {profile.get('vfxRootPath', '/vfx/projects/default')}",
-            file=sys.stderr,
+        from mapping_utils.generate_mappings import generate_mappings
+        from mapping_utils.progress import update_mapping_progress
+        from mapping_utils.group_image_sequences import group_image_sequences
+        # Import or pass other dependencies as needed
+        return generate_mappings(
+            tree=tree,
+            profile=profile,
+            batch_id=batch_id,
+            websocket_available=websocket_available,
+            update_mapping_progress=update_mapping_progress,
+            group_image_sequences=group_image_sequences,
+            extract_sequence_info=self._extract_sequence_info,
+            is_network_path=self._is_network_path,
+            create_sequence_mapping=self._create_sequence_mapping,
+            create_simple_mapping=self._create_simple_mapping,
+            finalize_sequences=self._finalize_sequences,
         )
-        print(
-            f"Tree: {tree.get('name', 'Unknown')} (type: {tree.get('type', 'unknown')})",
-            file=sys.stderr,
-        )
-        children = tree.get("children", [])
-        print(f"Processing {len(children)} items", file=sys.stderr)
-        all_files = []
-
-        # Check if tree has _all_files (folders-only mode with file list)
-        if "_all_files" in tree and tree["_all_files"]:
-            print(f"Using _all_files list from folders-only tree", file=sys.stderr)
-            # Convert file paths to file nodes
-            for file_path in tree["_all_files"]:
-                try:
-                    path_obj = Path(file_path)
-                    stat_info = path_obj.stat()
-                    file_node = {
-                        "name": path_obj.name,
-                        "path": str(path_obj),
-                        "type": "file",
-                        "size": stat_info.st_size,
-                        "extension": path_obj.suffix.lower(),
-                    }
-                    all_files.append(file_node)
-                except Exception as e:
-                    print(f"Error processing file {file_path}: {e}", file=sys.stderr)
-                    continue
-        else:
-            # Traditional tree traversal for trees with file nodes
-            def collect_files(node):
-                node_type = node.get("type", "unknown")
-                if node_type == "file":
-                    all_files.append(node)
-                elif node_type == "folder":
-                    children = node.get("children", [])
-                    for child in children:
-                        collect_files(child)
-
-            collect_files(tree)
-        
-        print(f"Collected {len(all_files)} total files", file=sys.stderr)
-        sequences, single_files = self._group_image_sequences(all_files)
-        print(
-            f"Found {len(sequences)} image sequences and {len(single_files)} single files",
-            file=sys.stderr,
-        )
-        mappings = []
-        for sequence in sequences:
-            mapping = self._create_sequence_mapping(sequence, profile)
-            mappings.append(mapping)
-        for file_node in single_files:
-            mapping = self._create_simple_mapping(file_node, profile)
-            mappings.append(mapping)
-        auto_mapped = len([m for m in mappings if m.get("status") == "auto"])
-        manual_mapped = len([m for m in mappings if m.get("status") == "manual"])
-        sequence_count = len([m for m in mappings if m.get("type") == "sequence"])
-        print(f"=== MAPPING SUMMARY ===", file=sys.stderr)
-        print(f"Total mappings: {len(mappings)}", file=sys.stderr)
-        print(f"Image sequences: {sequence_count}", file=sys.stderr)
-        print(f"Single files: {len(mappings) - sequence_count}", file=sys.stderr)
-        print(f"Auto-mapped: {auto_mapped}", file=sys.stderr)
-        print(f"Manual required: {manual_mapped}", file=sys.stderr)
-        return mappings
 
     def _init_patterns_from_profile(self, profile: Dict[str, Any]):
         print(
@@ -246,277 +138,233 @@ class MappingGenerator:
                 file=sys.stderr,
             )
 
-    def _group_image_sequences(self, files: List[Dict[str, Any]]):
-        sequence_extensions = {
-            ".exr",
-            ".dpx",
-            ".tiff",
-            ".tif",
-            ".jpg",
-            ".jpeg",
-            ".png",
-            ".hdr",
-        }
-        file_groups = {}
-        single_files = []
-
-        print(
-            f"[DEBUG] Starting sequence grouping with {len(files)} files",
-            file=sys.stderr,
-        )
-
-        for file_node in files:
-            filename = file_node.get("name", "")
-            filepath = file_node.get("path", "")
-            extension = file_node.get("extension", "").lower()
-
-            print(
-                f"[DEBUG] Processing file: {filename} (ext: {extension})",
-                file=sys.stderr,
-            )
-
-            if extension not in sequence_extensions:
-                print(
-                    f"[DEBUG] Not a sequence extension, adding to single files: {filename}",
-                    file=sys.stderr,
-                )
-                single_files.append(file_node)
-                continue
-
-            directory = str(Path(filepath).parent)
-            sequence_info = self._extract_sequence_info(filename)
-
-            if sequence_info:
-                base_name = sequence_info["base_name"]
-                frame_number = sequence_info["frame_number"]
-                suffix = sequence_info["suffix"]
-                group_key = f"{directory}|{base_name}|{suffix}|{extension}"
-
-                print(f"[DEBUG] Sequence info extracted:", file=sys.stderr)
-                print(f"  File: {filename}", file=sys.stderr)
-                print(f"  Directory: {directory}", file=sys.stderr)
-                print(f"  Base name: {base_name}", file=sys.stderr)
-                print(f"  Frame number: {frame_number}", file=sys.stderr)
-                print(f"  Suffix: {suffix}", file=sys.stderr)
-                print(f"  Group key: {group_key}", file=sys.stderr)
-
-                if group_key not in file_groups:
-                    file_groups[group_key] = {
-                        "directory": directory,
-                        "base_name": base_name,
-                        "suffix": suffix,
-                        "extension": extension,
-                        "files": [],
-                        "frame_numbers": [],
-                    }
-                    print(f"[DEBUG] Created new group: {group_key}", file=sys.stderr)
-                else:
-                    print(
-                        f"[DEBUG] Adding to existing group: {group_key}",
-                        file=sys.stderr,
-                    )
-
-                file_groups[group_key]["files"].append(file_node)
-                file_groups[group_key]["frame_numbers"].append(frame_number)
-            else:
-                print(
-                    f"[DEBUG] No sequence info extracted, adding to single files: {filename}",
-                    file=sys.stderr,
-                )
-                single_files.append(file_node)
-
-        print(f"[DEBUG] Found {len(file_groups)} file groups", file=sys.stderr)
-        for group_key, group_data in file_groups.items():
-            print(
-                f"[DEBUG] Group {group_key}: {len(group_data['files'])} files, frames {group_data['frame_numbers']}",
-                file=sys.stderr,
-            )
-
+    def _is_network_path(self, path: str) -> bool:
+        """Check if a path is on a network drive"""
+        network_prefixes = ('\\\\', '//', 'N:', 'Z:', 'V:')  # Common network drive prefixes
+        return any(path.startswith(prefix) for prefix in network_prefixes)
+      
+    def _finalize_sequences(self, file_groups, files, single_files, batch_id):
+        """Finalize the sequences from grouped files, with timeout protection"""
         sequences = []
-        for group_key, group_data in file_groups.items():
-            if len(group_data["files"]) > 1:
-                sorted_files = sorted(
-                    zip(group_data["files"], group_data["frame_numbers"]),
-                    key=lambda x: x[1],
-                )
-                sequence = {
-                    "type": "sequence",
-                    "base_name": group_data["base_name"],
-                    "suffix": group_data["suffix"],
-                    "extension": group_data["extension"],
-                    "directory": group_data["directory"],
-                    "files": [f[0] for f in sorted_files],
-                    "frame_numbers": [f[1] for f in sorted_files],
-                    "frame_range": f"{min(group_data['frame_numbers'])}-{max(group_data['frame_numbers'])}",
-                    "frame_count": len(group_data["files"]),
-                }
-                sequences.append(sequence)
-                print(
-                    f"  Sequence: {group_data['base_name']}{group_data['suffix']}{group_data['extension']} "
-                    f"[{sequence['frame_range']}] ({sequence['frame_count']} frames)",
-                    file=sys.stderr,
-                )
-            else:
-                print(
-                    f"[DEBUG] Group {group_key} has only 1 file, treating as single file",
-                    file=sys.stderr,
-                )
-                single_files.extend(group_data["files"])
+        progress_interval = 100
+        progress_update_interval = 1.0  # 1 second between updates
+        last_progress_time = time.time()
+      
+        # Report initial status
+        print(f"[INFO] Finalizing {len(file_groups)} sequence groups", file=sys.stderr)
+        if batch_id:
+            self.update_mapping_progress(batch_id, 0, len(file_groups), status="finalizing_sequences")
+          
+        # Process sequences in batches to avoid memory issues
+        for i, (seq_key, group_data) in enumerate(file_groups.items()):
+            try:
+                # Update progress periodically
+                current_time = time.time()
+                if i % progress_interval == 0 or (current_time - last_progress_time > progress_update_interval):
+                    if batch_id:
+                        self.update_mapping_progress(
+                            batch_id, i, len(file_groups), 
+                            status="finalizing_sequences", 
+                            current_file=f"Processing group {i+1}/{len(file_groups)}"
+                        )
+                    if i % (progress_interval * 10) == 0 or i == 0:
+                        print(f"[PROGRESS] Sequence finalization: {i+1}/{len(file_groups)} groups", file=sys.stderr)
+                    last_progress_time = current_time
+              
+                # Skip empty groups
+                if not group_data.get("files") or len(group_data["files"]) == 0:
+                    continue
+                  
+                # Sequences need at least 2 frames
+                if len(group_data["files"]) > 1:
+                    # If frames are available, sort by frame number
+                    if "frames" in group_data and len(group_data["frames"]) > 0:
+                        frames = group_data["frames"]
+                        files = group_data["files"]
+                      
+                        # Create sorted frames and files
+                        # Make sure we have valid frame numbers
+                        if not all(isinstance(frame, int) for frame in frames):
+                            print(f"[WARNING] Invalid frame numbers in sequence, skipping group", file=sys.stderr)
+                            single_files.extend(files)
+                            continue
+                          
+                        frame_file_pairs = sorted(zip(frames, files), key=lambda x: x[0])
+                        sorted_frames = [pair[0] for pair in frame_file_pairs]
+                        sorted_files = [pair[1] for pair in frame_file_pairs]
+                      
+                        sequence = {
+                            "type": "sequence",
+                            "base_name": group_data["base_name"],
+                            "suffix": group_data["suffix"],
+                            "extension": group_data.get("extension", group_data["suffix"]),
+                            "directory": group_data["directory"],
+                            "files": sorted_files,
+                            "frame_numbers": sorted_frames,
+                            "frame_range": f"{min(sorted_frames)}-{max(sorted_frames)}",
+                            "frame_count": len(sorted_files),
+                            "size": group_data.get("size", 0),
+                        }
+                      
+                        sequences.append(sequence)
+                      
+                        # Log only occasionally for large sets
+                        if len(sequences) % 10 == 0 or len(sequences) < 10:
+                            print(
+                                f"  Sequence: {group_data['base_name']}.{group_data['suffix']} "
+                                f"[{sequence['frame_range']}] ({sequence['frame_count']} frames)",
+                                file=sys.stderr,
+                            )
+                    else:
+                        # If frames aren't available, just process as single files
+                        single_files.extend(group_data["files"])
+                else:
+                    # Groups with only one file go to single files
+                    if len(group_data["files"]) == 1:
+                        single_files.append(group_data["files"][0])
+            except Exception as e:
+                # If any error happens during finalization, add all files to singles as fallback
+                # print(f"[ERROR] Error finalizing sequence group {seq_key}: {e}", file=sys.stderr)
+                if "files" in group_data and group_data["files"]:
+                    single_files.extend(group_data["files"])
+      
+        # Final progress update
+        if batch_id:
+            self.update_mapping_progress(batch_id, len(file_groups), len(file_groups), status="sequences_grouped")
 
         print(
-            f"[DEBUG] Final result: {len(sequences)} sequences, {len(single_files)} single files",
+            f"[INFO] Final result: {len(sequences)} sequences, {len(single_files)} single files",
             file=sys.stderr,
         )
         return sequences, single_files
 
-    def _extract_sequence_info(self, filename: str) -> Optional[Dict[str, Any]]:
-        patterns = [
-            r"^(.+)[._](\d{3,6})(\..+)$",
-            r"^(.+[._]v\d{2,3})[._](\d{3,6})(\..+)$",
-            r"^(.+)_(\d{3,6})(_[^.]*)?(\..+)$",
-        ]
-        for pattern in patterns:
-            match = re.match(pattern, filename, re.IGNORECASE)
-            if match:
-                if len(match.groups()) == 3:
-                    base_name, frame_str, suffix = match.groups()
-                    return {
-                        "base_name": base_name,
-                        "frame_number": int(frame_str),
-                        "suffix": suffix,
-                    }
-                elif len(match.groups()) == 4:
-                    base_name, frame_str, extra_suffix, extension = match.groups()
-                    suffix = (extra_suffix or "") + extension
-                    return {
-                        "base_name": base_name,
-                        "frame_number": int(frame_str),
-                        "suffix": suffix,
-                    }
-        return None
 
-    def _create_sequence_mapping(
-        self, sequence: Dict[str, Any], profile: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        first_file = sequence["files"][0]
-        first_filename = first_file.get("name", "")
-        print(f"[DEBUG] Sequence mapping for: {first_filename}", file=sys.stderr)
-        first_filepath = first_file.get("path", "")
-        shot = self._extract_shot_simple(first_filename, first_filepath)
-        task = self._extract_task_simple(first_filename, first_filepath)
-        print(f"[DEBUG] Extracted task: {task}", file=sys.stderr)
-        version = self._extract_version_simple(first_filename)
-        resolution = self._extract_resolution_simple(first_filename, first_filepath)
-        asset = self._extract_asset_simple(first_filename)
-        stage = self._extract_stage_simple(first_filename)
-        print(f"[DEBUG] Sequence: {first_filename}", file=sys.stderr)
-        print(f"  Extracted asset: {asset}", file=sys.stderr)
-        print(f"  Extracted stage: {stage}", file=sys.stderr)
-        print(f"  Extracted task: {task}", file=sys.stderr)
-        base_name = sequence["base_name"]
-        suffix = sequence["suffix"]
-        frame_range = sequence["frame_range"]
-        frame_count = sequence["frame_count"]
-        ext = sequence.get("extension", "")
-        if suffix.endswith(ext):
-            sequence_filename = (
-                f"{base_name}.####{suffix}"
-                if "." in suffix
-                else f"{base_name}_####{suffix}"
-            )
+    from mapping_utils.extract_sequence_info import extract_sequence_info
+
+    def _process_sequence_mapping(self, first_file, base_name, ext, suffix, directory, first_filepath, profile, shot, asset, stage, task, version, resolution, files_list):
+        # Validate required inputs
+        if not first_file or not profile:
+            return {
+                "source": "unknown",
+                "destination": "unknown",
+                "reason": "Missing required sequence mapping input."
+            }
+        # Extract filename and filepath
+        if isinstance(first_file, str):
+            first_filename = os.path.basename(first_file)
+            first_filepath = first_file
         else:
-            sequence_filename = (
-                f"{base_name}.####{suffix}{ext}"
-                if "." in suffix
-                else f"{base_name}_####{suffix}{ext}"
-            )
-        import os
+            first_filename = first_file.get("name", "")
+            first_filepath = first_file.get("path", "")
+        if not first_filename or not first_filepath:
+            return {
+                "source": "unknown",
+                "destination": "unknown",
+                "reason": "Missing filename or filepath for sequence."
+            }
 
         if "." in suffix:
             sequence_pattern = f"{base_name}.####{suffix}"
         else:
             sequence_pattern = f"{base_name}_####{suffix}"
-        source_pattern = os.path.join(sequence["directory"], sequence_pattern)
+
+        # Ensure we have a valid directory
+        if not directory and first_filepath:
+            directory = os.path.dirname(first_filepath)
+        elif not directory:
+            directory = os.getcwd()
+
+        source_pattern = os.path.join(directory, sequence_pattern)
         vfx_root = profile.get("vfxRootPath", "/vfx/projects/default")
         target_path = self._generate_simple_target_path(
-            vfx_root,
-            shot,
-            asset,
-            stage,
-            task,
-            version,
-            resolution,
-            sequence_filename,
-            profile,
+            vfx_root, shot, asset, stage, task, version, resolution, sequence_filename, profile
         )
-        print(f"  Target path: {target_path}", file=sys.stderr)
+
+        # Determine mapping status
         if shot and task and version:
             status = "auto"
         else:
             status = "manual"
+
         total_size = 0
         validated_files = []
-        for file_node in sequence["files"]:
-            validated_file = {
-                "name": file_node.get("name", "unknown_file"),
-                "path": file_node.get("path", ""),
-                "type": file_node.get("type", "file"),
-                "size": file_node.get("size", 0),
-                "extension": file_node.get("extension", ""),
-            }
+        for file_node in files_list:
+            if isinstance(file_node, str):
+                file_path = file_node
+                file_name = os.path.basename(file_path)
+                file_size = 0
+                try:
+                    if os.path.exists(file_path):
+                        file_size = os.path.getsize(file_path)
+                except Exception as e:
+                    print(f"[WARNING] Could not get file size for {file_path}: {e}", file=sys.stderr)
+                _, file_ext = os.path.splitext(file_name)
+                file_ext = file_ext.lstrip('.')
+                validated_file = {
+                    "name": file_name,
+                    "path": file_path,
+                    "type": "file",
+                    "size": file_size,
+                    "extension": file_ext,
+                }
+            else:
+                validated_file = {
+                    "name": file_node.get("name", "unknown_file"),
+                    "path": file_node.get("path", ""),
+                    "type": file_node.get("type", "file"),
+                    "size": file_node.get("size", 0),
+                    "extension": file_node.get("extension", ""),
+                }
             validated_files.append(validated_file)
             total_size += validated_file["size"]
+
         # Add start/end to sequence dict for backend compatibility
+        frame_numbers_list = []
+        if isinstance(sequence, dict):
+            frame_numbers_list = sequence.get("frame_numbers", [])
+        elif hasattr(self, 'current_frame_numbers'):
+            frame_numbers_list = self.current_frame_numbers
+
         seq_dict = {
             "base_name": base_name,
             "frame_range": frame_range,
             "frame_count": frame_count,
             "total_size": total_size,
             "files": validated_files,
-            "frame_numbers": sequence.get("frame_numbers", []),
+            "frame_numbers": frame_numbers_list,
         }
-        if sequence.get("frame_numbers"):
-            seq_dict["start"] = min(sequence["frame_numbers"])
-            seq_dict["end"] = max(sequence["frame_numbers"])
-        return {
-            "id": str(uuid.uuid4()),
-            "name": sequence_filename,
-            "type": "sequence",
-            "sourcePath": source_pattern,
-            "targetPath": target_path,
+        if frame_numbers_list:
+            try:
+                seq_dict["start"] = min(frame_numbers_list)
+                seq_dict["end"] = max(frame_numbers_list)
+            except Exception as e:
+                print(f"[WARNING] Could not extract min/max from frame numbers: {e}", file=sys.stderr)
+        else:
+            print(f"[WARNING] No frame numbers available for sequence", file=sys.stderr)
+
+        # Final mapping structure
+        mapping = {
+            "source": source_pattern,
+            "destination": target_path,
             "status": status,
-            "shot": shot,
-            "asset": asset,
-            "stage": stage,
-            "task": task,
-            "version": version,
-            "resolution": resolution,
-            "node": {
-                "name": sequence_filename,
-                "path": source_pattern,
-                "type": "sequence",
-                "size": total_size,
-                "extension": sequence.get("extension", ""),
-                "children": [],
-            },
             "sequence": seq_dict,
-            "displayName": f"{base_name} [{frame_range}] ({frame_count} frames)",
         }
+        return mapping
 
     def _create_simple_mapping(
         self, node: Dict[str, Any], profile: Dict[str, Any]
     ) -> Dict[str, Any]:
         filename = node.get("name", "")
-        print(f"[DEBUG] Simple mapping for: {filename}", file=sys.stderr)
+        # print(f"[DEBUG] Simple mapping for: {filename}", file=sys.stderr)
         source_path = node.get("path", "")
-        shot = self._extract_shot_simple(filename, source_path)
-        task = self._extract_task_simple(filename, source_path)
-        print(f"[DEBUG] Extracted task: {task}", file=sys.stderr)
-        version = self._extract_version_simple(filename)
-        resolution = self._extract_resolution_simple(filename, source_path)
-        asset = self._extract_asset_simple(filename)
-        stage = self._extract_stage_simple(filename)
-        print(f"[DEBUG] File: {filename}", file=sys.stderr)
+        shot = self.extract_shot_simple(filename, source_path)
+        task = self.extract_task_simple(filename, source_path)
+        # print(f"[DEBUG] Extracted task: {task}", file=sys.stderr)
+        version = self.extract_version_simple(filename)
+        resolution = self.extract_resolution_simple(filename, source_path)
+        asset = self.extract_asset_simple(filename)
+        stage = self.extract_stage_simple(filename)
+        # print(f"[DEBUG] File: {filename}", file=sys.stderr)
         print(f"  Extracted asset: {asset}", file=sys.stderr)
         print(f"  Extracted stage: {stage}", file=sys.stderr)
         print(f"  Extracted task: {task}", file=sys.stderr)

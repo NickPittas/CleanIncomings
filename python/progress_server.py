@@ -24,6 +24,10 @@ _shutdown_event = threading.Event()
 progress_dir = os.path.join(os.path.dirname(__file__), "_progress")
 os.makedirs(progress_dir, exist_ok=True)
 
+# Global flags for WebSocket availability status
+WEBSOCKET_AVAILABLE = True  # Assume available since websockets was imported
+SERVER_STARTED = False      # Will be set to True when server is successfully started
+
 class ProgressServer:
     def __init__(self, host='127.0.0.1', port=8765):
         self.host = host
@@ -285,6 +289,7 @@ def get_websocket_port():
 _loop_ref = None
 
 def run_server():
+    global SERVER_STARTED
     print("[DEBUG] Entered run_server thread", file=sys.stderr)
     try:
         print("[DEBUG] Creating new asyncio event loop", file=sys.stderr)
@@ -301,6 +306,10 @@ def run_server():
         print("[DEBUG] Finished loop.run_until_complete(server.start_server())", file=sys.stderr)
         global _server_port
         _server_port = server.port
+        
+        # Set the SERVER_STARTED flag to True now that server is actually running
+        SERVER_STARTED = True
+        
         print(f"[DEBUG] WebSocket server running on port {_server_port}, entering run_forever loop", file=sys.stderr)
         logger.info(f"[THREAD] WebSocket server running on port {_server_port}, entering run_forever loop")
         try:
@@ -327,12 +336,13 @@ def run_server():
 
 def start_progress_server():
     """Start the progress server in a background thread if not already running"""
-    global _server_thread, _server_port, _shutdown_event
+    global _server_thread, _server_port, _shutdown_event, SERVER_STARTED
     print("[DEBUG] Entered start_progress_server", file=sys.stderr)
     # Don't start if already running
     if _server_thread and _server_thread.is_alive():
         print("[DEBUG] WebSocket server already running (thread alive)", file=sys.stderr)
         logger.info("WebSocket server already running")
+        SERVER_STARTED = True  # Set flag to indicate server is running
         return True
     print("[DEBUG] Clearing shutdown event", file=sys.stderr)
     _shutdown_event.clear()
@@ -342,6 +352,7 @@ def start_progress_server():
         if _server_thread and _server_thread.is_alive():
             print("[DEBUG] WebSocket server already running (thread alive, inside lock)", file=sys.stderr)
             logger.info("WebSocket server already running")
+            SERVER_STARTED = True  # Set flag to indicate server is running
             return True
         print("[DEBUG] Creating server thread", file=sys.stderr)
         server_thread = threading.Thread(target=run_server, daemon=True)
@@ -354,9 +365,13 @@ def start_progress_server():
     time.sleep(0.5)
     print("[DEBUG] Checking server status after thread start", file=sys.stderr)
     server = get_progress_server()
-    logger.info(f"Progress server started in background thread on port {server.port}")
-    print(f"[DEBUG] Progress server started in background thread on port {server.port}", file=sys.stderr)
-    return server.running
+    server_status = server.running
+    # Set global flag to reflect server status
+    SERVER_STARTED = server_status
+    
+    logger.info(f"Progress server started in background thread on port {server.port}, status: {server_status}")
+    print(f"[DEBUG] Progress server started in background thread on port {server.port}, running: {server_status}", file=sys.stderr)
+    return server_status
 
 def stop_progress_server():
     """Stop the progress server if it's running"""

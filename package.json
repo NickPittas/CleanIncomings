@@ -5,14 +5,14 @@
   "main": "dist/main.js",
   "homepage": "./",
   "scripts": {
-    "dev": "concurrently --kill-others \"yarn dev:renderer\" \"yarn dev:electron:delayed\"",
+    "dev": "concurrently -k \"yarn dev:renderer\" \"yarn dev:electron:wait\"",
     "dev:win": "start-dev.bat",
-    "dev:simple": "concurrently \"yarn dev:renderer\" \"yarn dev:electron\"",
+    "dev:simple": "concurrently -k \"yarn dev:renderer\" \"yarn dev:electron\"",
     "dev:renderer": "vite --port 3001",
-    "dev:main": "tsc -p tsconfig.main.json && electron dist/main.js",
-    "dev:electron": "tsc -p tsconfig.main.json && electron dist/main.js",
-    "dev:electron:wait": "wait-on http://localhost:3001 && yarn dev:electron",
-    "dev:electron:delayed": "powershell -Command \"Start-Sleep -Seconds 5\" && yarn dev:electron",
+    "dev:main": "tsc -p tsconfig.main.json",
+    "dev:electron": "wait-on tcp:3001 && tsc -p tsconfig.main.json && cross-env ELECTRON_START_URL=http://localhost:3001 electron .",
+    "dev:electron:wait": "wait-on tcp:3001 && yarn dev:electron",
+    "dev:electron:delayed": "wait-on -t 10000 tcp:3001 && yarn dev:electron",
     "dev:full": "concurrently \"yarn dev:renderer\" \"yarn dev:electron\"",
     "start": "yarn dev",
     "build": "yarn build:renderer && yarn build:main",
@@ -26,7 +26,11 @@
     "test:watch": "jest --watch",
     "lint": "eslint src --ext .ts,.tsx",
     "lint:fix": "eslint src --ext .ts,.tsx --fix",
-    "format": "prettier --write \"src/**/*.{ts,tsx,js,jsx,json,css,md}\""
+    "format": "prettier --write \"src/**/*.{ts,tsx,js,jsx,json,css,md}\"",
+    "postinstall": "electron-builder install-app-deps",
+    "check-assets": "node scripts/checkAssets.js",
+    "build-and-package": "yarn build && yarn check-assets && yarn package",
+    "prepackage": "yarn build && yarn check-assets"
   },
   "keywords": [
     "electron",
@@ -49,8 +53,10 @@
     "@typescript-eslint/parser": "^6.7.0",
     "@vitejs/plugin-react": "^4.0.4",
     "concurrently": "^8.2.1",
+    "cross-env": "^7.0.3",
     "electron": "^26.2.1",
     "electron-builder": "^24.6.4",
+    "electron-rebuild": "^3.2.9",
     "eslint": "^8.49.0",
     "eslint-plugin-react": "^7.33.2",
     "eslint-plugin-react-hooks": "^4.6.0",
@@ -64,13 +70,8 @@
   },
   "dependencies": {
     "@tabler/icons-react": "^2.34.0",
-    "@types/ws": "^8.18.1",
-    "electron-store": "^8.1.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "react-dropzone": "^14.2.3",
-    "sqlite3": "^5.1.6",
-    "ws": "^8.18.2",
     "zustand": "^4.4.1"
   },
   "build": {
@@ -81,18 +82,30 @@
     },
     "files": [
       "dist/**/*",
-      "python/**/*",
       "node_modules/**/*"
     ],
     "extraResources": [
       {
         "from": "python",
-        "to": "python"
+        "to": "python",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "assets",
+        "to": "assets",
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "win": {
       "target": "nsis",
-      "icon": "assets/icon.ico"
+      "icon": "assets/icon.ico",
+      "extraFiles": [
+        "python/**/*"
+      ]
     },
     "mac": {
       "target": "dmg",
@@ -101,6 +114,9 @@
     "linux": {
       "target": "AppImage",
       "icon": "assets/icon.png"
+    },
+    "extraMetadata": {
+      "main": "dist/main.js"
     }
   }
 }

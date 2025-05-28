@@ -6,6 +6,7 @@ export interface ElectronAPI {
   scanFolderWithProgress: (folderPath: string) => Promise<{ batchId: string }>;
   getScanProgress: (batchId: string) => Promise<any>;
   generateMapping: (tree: any, profile: any) => Promise<any>;
+  getMappingProgress: (batchId: string) => Promise<any>;
   applyMappings: (mappings: any[]) => Promise<any>;
   applyMappingsEnhanced: (data: any) => Promise<any>;
   getProgress: (batchId: string) => Promise<any>;
@@ -29,6 +30,7 @@ const electronAPI: ElectronAPI = {
   scanFolderWithProgress: (folderPath: string) => ipcRenderer.invoke('python-scan-folder-with-progress', folderPath),
   getScanProgress: (batchId: string) => ipcRenderer.invoke('python-get-scan-progress', batchId),
   generateMapping: (tree: any, profile: any) => ipcRenderer.invoke('python-generate-mapping', tree, profile),
+  getMappingProgress: (batchId: string) => ipcRenderer.invoke('python-get-mapping-progress', batchId),
   applyMappings: (mappings: any[]) => ipcRenderer.invoke('python-apply-mappings', mappings),
   applyMappingsEnhanced: (data: any) => ipcRenderer.invoke('python-apply-mappings-enhanced', data),
   getProgress: (batchId: string) => ipcRenderer.invoke('python-get-progress', batchId),

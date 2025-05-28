@@ -5,6 +5,8 @@ import shutil
 import uuid
 import json
 import time
+import concurrent.futures
+import threading
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -53,6 +55,13 @@ class FileSystemScanner:
         self._scan_batch_id = None
         self._last_websocket_update_time = 0
         self._min_update_interval = 0.05  # Minimum 50ms between updates
+        
+        # Configure timeout and performance settings
+        self.network_timeout = 15.0  # Seconds to wait for network operations
+        self.network_retry_count = 3  # Number of retries for network operations
+        self.network_paths = ('\\\\', '//', 'N:', 'Z:', 'V:')  # Common network drive prefixes
+        self.max_workers_local = 8  # Maximum worker threads for local paths
+        self.max_workers_network = 4  # Maximum worker threads for network paths
         
         # --- AUTO-START LOGIC FOR WEBSOCKET SERVER ---
         global WEBSOCKET_AVAILABLE, SERVER_STARTED
@@ -121,25 +130,44 @@ class FileSystemScanner:
                     progress["estimatedTotalFiles"] = adjusted_estimate
                     total_files = adjusted_estimate
                 
+                # Add scan-specific status information
+                current_file = progress.get("currentFile", "")
+                current_folder = progress.get("currentFolder", "")
+                detailed_status = progress.get("status", "running")
+                
+                # Provide more detailed file information for better UI feedback
+                if current_file and len(current_file) > 100:
+                    # Trim long paths for display
+                    display_file = "..." + current_file[-97:]
+                else:
+                    display_file = current_file
+                
                 # Convert scan progress to WebSocket format
                 send_progress_update(
                     batch_id=batch_id,
                     files_processed=files_scanned,
                     total_files=total_files,
-                    current_file=progress.get("currentFile", ""),
-                    status=progress.get("status", "running")
+                    current_file=display_file,
+                    status=detailed_status
                 )
+                
+                # Print confirmation of successful progress update periodically
+                if files_scanned % 5000 == 0 and files_scanned > 0:
+                    print(f"WebSocket progress update sent: {files_scanned}/{total_files} files", file=sys.stderr)
+                    
             except Exception as e:
                 print(f"[WARNING] Failed to send WebSocket scan progress: {e}", file=sys.stderr)
-                import traceback
-                traceback.print_exc(file=sys.stderr)
+                # Only print full traceback for first few errors to avoid log spam
+                if self.file_count < 1000:  # Only show detailed errors in early scanning
+                    import traceback
+                    traceback.print_exc(file=sys.stderr)
         else:
             # Only print not available message once to reduce log spam
             if progress.get('totalFilesScanned', 0) == 0:
                 if not WEBSOCKET_AVAILABLE:
-                    print(f"[DEBUG] WebSocket module not available, skipping progress update", file=sys.stderr)
+                    print(f"[WARNING] WebSocket module not available for scanning", file=sys.stderr)
                 elif not SERVER_STARTED:
-                    print(f"[DEBUG] WebSocket server not running, skipping progress update", file=sys.stderr)
+                    print(f"[WARNING] WebSocket server not running, scan progress updates will be limited", file=sys.stderr)
 
     def scan_directory_with_progress(
         self,
@@ -153,14 +181,39 @@ class FileSystemScanner:
         """
         if batch_id is None:
             batch_id = str(uuid.uuid4())
+        
+        # Ensure WebSocket server is running before we start scanning
+        if WEBSOCKET_AVAILABLE:
+            try:
+                print("[INFO] Starting WebSocket progress server...", file=sys.stderr)
+                server_started = start_progress_server()
+                if server_started:
+                    print(f"[INFO] WebSocket server started successfully on port {get_websocket_port()}", file=sys.stderr)
+                else:
+                    print("[WARNING] WebSocket server failed to start", file=sys.stderr)
+                    
+                # Check server health
+                health = check_server_health()
+                print(f"[INFO] WebSocket server health: {health}", file=sys.stderr)
+            except Exception as e:
+                print(f"[ERROR] Failed to start WebSocket server: {e}", file=sys.stderr)
+        else:
+            print("[WARNING] WebSocket progress functionality not available", file=sys.stderr)
+        
         self._scan_batch_id = batch_id
         self._scan_start_time = time.time()
         self.file_count = 0
         self.folder_count = 0
         self._last_websocket_update_time = 0
         
+        # Check if path is a network path and adjust parameters
+        is_network = self._is_network_path(path)
+        if is_network:
+            print(f"Network path detected: {path}", file=sys.stderr)
+            print("Using optimized parameters for network scanning", file=sys.stderr)
+        
         # Estimate total files for better progress calculation
-        estimated_total = max_files or 10000  # Default estimate
+        estimated_total = max_files or (5000 if is_network else 10000)  # Lower default for network paths
         
         progress = {
             "batchId": batch_id,
@@ -350,51 +403,176 @@ class FileSystemScanner:
             print(f"Scan error: {str(e)}", file=sys.stderr)
             return {"error": f"Failed to scan directory: {str(e)}"}
 
+    def _is_network_path(self, path: str) -> bool:
+        """Check if a path is on a network drive"""
+        return any(path.startswith(prefix) for prefix in self.network_paths)
+    
     def _list_dir_safe(self, path: str) -> List[Any]:
-        try:
-            entries = list(scandir(path))
-            return [e for e in entries if not self._should_skip(e.name)]
-        except (OSError, PermissionError) as e:
-            print(f"Cannot access directory {path}: {e}", file=sys.stderr)
-            return []
-        except Exception as e:
-            print(f"Unexpected error scanning {path}: {e}", file=sys.stderr)
-            return []
+        # Use different timeout settings for network vs local paths
+        is_network = self._is_network_path(path)
+        timeout = self.network_timeout if is_network else 5.0
+        retry_count = self.network_retry_count if is_network else 1
+        
+        for attempt in range(retry_count):
+            try:
+                # Start a timer to detect slow operations
+                start_time = time.time()
+                
+                # Use a separate thread with timeout for network operations
+                if is_network:
+                    def scan_with_timeout():
+                        try:
+                            return list(scandir(path))
+                        except Exception as e:
+                            return e
+                    
+                    # Run scandir in a separate thread with timeout
+                    with ThreadPoolExecutor(max_workers=1) as executor:
+                        future = executor.submit(scan_with_timeout)
+                        try:
+                            result = future.result(timeout=timeout)
+                            if isinstance(result, Exception):
+                                raise result
+                            entries = result
+                        except (TimeoutError, concurrent.futures.TimeoutError):
+                            print(f"Timeout scanning directory {path} after {timeout}s", file=sys.stderr)
+                            # Continue to next retry attempt
+                            time.sleep(0.5)  # Small delay before retry
+                            continue
+                else:
+                    # For local paths, just do a direct scandir
+                    entries = list(scandir(path))
+                
+                # Log slow operations for diagnostics
+                elapsed = time.time() - start_time
+                if elapsed > 2.0:  # Log slow directory access
+                    print(f"Slow directory access: {path} took {elapsed:.2f}s", file=sys.stderr)
+                
+                # Filter entries
+                return [e for e in entries if not self._should_skip(e.name)]
+                
+            except (OSError, PermissionError) as e:
+                print(f"Cannot access directory {path}: {e}", file=sys.stderr)
+                if attempt < retry_count - 1:
+                    print(f"Retrying... (attempt {attempt+1}/{retry_count})", file=sys.stderr)
+                    time.sleep(0.5)  # Small delay before retry
+                    continue
+                return []
+            except Exception as e:
+                print(f"Unexpected error scanning {path}: {e}", file=sys.stderr)
+                return []
+        
+        # If we get here after all retries, return empty list
+        return []
 
     def _crawl_threaded(
-        self, root: str, max_files: int = None, max_workers: int = 16
+        self, root: str, max_files: int = None, max_workers: int = None
     ) -> Tuple[List[str], List[str]]:
+        # Determine if root is on a network path
+        is_network = self._is_network_path(root)
+        
+        # Adjust worker count based on path type
+        if max_workers is None:
+            max_workers = self.max_workers_network if is_network else self.max_workers_local
+        
         print(
-            f"Starting threaded crawl with {max_workers} workers (unlimited files)",
+            f"Starting threaded crawl with {max_workers} workers {'(network path)' if is_network else '(local path)'}",
             file=sys.stderr,
         )
+        
+        # Create a cancel flag for long-running operations
+        cancel_scan = threading.Event()
+        start_time = time.time()
+        last_progress_time = start_time
+        
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = [executor.submit(self._list_dir_safe, root)]
             file_paths = []
             dir_paths = [root]
-            while futures:
+            active_paths = set()  # Track directories being processed
+            
+            # Timeout for entire scan operation - 10 minutes for network, 5 minutes for local
+            global_timeout = 600 if is_network else 300
+            
+            while futures and not cancel_scan.is_set():
+                # Check if overall timeout has been reached
+                if time.time() - start_time > global_timeout:
+                    print(f"Scan timeout after {global_timeout}s, cancelling operation", file=sys.stderr)
+                    for future in futures:
+                        future.cancel()
+                    break
+                
+                # Check progress rate
+                current_time = time.time()
+                if current_time - last_progress_time > 60:  # No progress for 1 minute
+                    print(f"No scan progress for 60 seconds, adjusting scan parameters", file=sys.stderr)
+                    # Reduce worker count to reduce load
+                    max_workers = max(2, max_workers // 2)
+                    print(f"Reducing worker count to {max_workers}", file=sys.stderr)
+                    last_progress_time = current_time
+                
                 completed_futures = []
-                for future in as_completed(futures):
-                    entries = future.result()
-                    completed_futures.append(future)
-                    for entry in entries:
-                        try:
-                            if entry.is_dir(follow_symlinks=False):
-                                dir_paths.append(entry.path)
-                                futures.append(
-                                    executor.submit(self._list_dir_safe, entry.path)
-                                )
-                            else:
-                                file_paths.append(entry.path)
-                                if len(file_paths) % 1000 == 0:
-                                    print(
-                                        f"Threaded scan progress: {len(file_paths)} files found...",
-                                        file=sys.stderr,
-                                    )
-                        except (OSError, PermissionError):
-                            continue
+                for future in as_completed(futures, timeout=5.0):  # Short timeout to check cancel flag periodically
+                    try:
+                        entries = future.result(timeout=10.0)  # Timeout for individual results
+                        completed_futures.append(future)
+                        last_progress_time = time.time()  # Update progress time
+                        
+                        for entry in entries:
+                            try:
+                                if entry.is_dir(follow_symlinks=False):
+                                    dir_path = entry.path
+                                    if dir_path not in active_paths:  # Avoid duplicate processing
+                                        dir_paths.append(dir_path)
+                                        active_paths.add(dir_path)
+                                        # Submit with priority handling - deeper paths get lower priority
+                                        depth = dir_path.count(os.sep)
+                                        # Use a limited queue size to prevent overwhelming the executor
+                                        if len(futures) - len(completed_futures) < max_workers * 3:
+                                            futures.append(
+                                                executor.submit(self._list_dir_safe, dir_path)
+                                            )
+                                else:
+                                    file_paths.append(entry.path)
+                                    if len(file_paths) % 1000 == 0:
+                                        print(
+                                            f"Threaded scan progress: {len(file_paths)} files found...",
+                                            file=sys.stderr,
+                                        )
+                                        last_progress_time = time.time()  # Update progress time
+                            except (OSError, PermissionError) as e:
+                                print(f"Error accessing {entry.path}: {e}", file=sys.stderr)
+                                continue
+                            except Exception as e:
+                                print(f"Unexpected error with {entry.path}: {e}", file=sys.stderr)
+                                continue
+                                
+                            # Check if we've reached the file limit
+                            if max_files and len(file_paths) >= max_files:
+                                print(f"Reached file limit of {max_files}", file=sys.stderr)
+                                cancel_scan.set()
+                                break
+                    except (TimeoutError, concurrent.futures.TimeoutError):
+                        print(f"Timeout waiting for directory scan results", file=sys.stderr)
+                        # Don't mark as completed, will retry
+                        continue
+                    except Exception as e:
+                        print(f"Error in crawl_threaded: {e}", file=sys.stderr)
+                        completed_futures.append(future)
+                
+                # Remove completed futures
                 for future in completed_futures:
-                    futures.remove(future)
+                    try:
+                        futures.remove(future)
+                    except ValueError:
+                        pass  # Future might have been removed already
+                        
+                # Progress update
+                if len(file_paths) % 5000 == 0 and file_paths:
+                    elapsed = time.time() - start_time
+                    rate = len(file_paths) / elapsed if elapsed > 0 else 0
+                    print(f"Scan stats: {len(file_paths)} files, {len(dir_paths)} dirs, {rate:.1f} files/sec", file=sys.stderr)
+        
         print(
             f"Threaded crawl completed: {len(file_paths)} files, {len(dir_paths)} directories",
             file=sys.stderr,
@@ -406,13 +584,28 @@ class FileSystemScanner:
             f"Using threaded scandir for optimal network performance", file=sys.stderr
         )
         try:
+            # Check if path is on network drive
+            is_network = self._is_network_path(str(path))
+            max_workers = self.max_workers_network if is_network else self.max_workers_local
+            
+            # Log information about the scan
+            print(f"Starting scan of {'network' if is_network else 'local'} path: {path}", file=sys.stderr)
+            if is_network:
+                print(f"Using reduced thread count ({max_workers}) and timeouts for network path", file=sys.stderr)
+            
+            # Use the improved crawl_threaded method
             file_paths, dir_paths = self._crawl_threaded(
-                str(path), max_files=max_files, max_workers=8
+                str(path), max_files=max_files, max_workers=max_workers
             )
+            
+            # Convert paths to Path objects
             files = [Path(fp) for fp in file_paths]
             dirs = [Path(dp) for dp in dir_paths]
             self.file_count = len(files)
             self.folder_count = len(dir_paths)
+            
+            # Build tree from collected files
+            print(f"Building tree from {len(files)} files, {len(dirs)} directories...", file=sys.stderr)
             return self._build_tree_from_files(path, files, folders_only=True, directories=dirs)
         except Exception as e:
             print(
@@ -554,16 +747,41 @@ class FileSystemScanner:
         # Always store the complete file list for mapping generation
         tree["_all_files"] = [str(f) for f in files]
         
+        # For very large file sets, process in batches to avoid memory issues
+        batch_size = 10000
+        is_network = self._is_network_path(str(root_path))
+        
         dir_structure = {}
-        for file_path in files:
+        total_files = len(files)
+        progress_interval = max(1, min(1000, total_files // 20))  # Report progress at 5% intervals
+        
+        # Process files in batches
+        for i, file_path in enumerate(files):
+            # Report progress periodically
+            if i % progress_interval == 0:
+                print(f"Building tree: processed {i}/{total_files} files ({i/total_files*100:.1f}%)...", file=sys.stderr)
+                
             try:
-                rel_path = file_path.relative_to(root_path)
+                # Use a try-except with timeout for network paths
+                if is_network:
+                    try:
+                        rel_path = file_path.relative_to(root_path)
+                    except Exception as e:
+                        print(f"Error getting relative path for {file_path}: {e}", file=sys.stderr)
+                        continue
+                else:
+                    rel_path = file_path.relative_to(root_path)
+                    
                 parts = rel_path.parts
                 current_dict = dir_structure
+                
+                # Process directory structure
                 for i, part in enumerate(parts[:-1]):
                     if part not in current_dict:
                         current_dict[part] = {"files": [], "dirs": {}}
                     current_dict = current_dict[part]["dirs"]
+                    
+                # Handle file placement
                 if len(parts) > 1:
                     parent_dir = parts[-2]
                     if parent_dir not in current_dict:
@@ -576,38 +794,71 @@ class FileSystemScanner:
             except Exception as e:
                 print(f"Error processing file {file_path}: {e}", file=sys.stderr)
                 continue
+        
+        # Build the final tree structure
+        print(f"Converting directory structure to tree...", file=sys.stderr)
         tree["children"] = self._convert_structure_to_tree(
             dir_structure, root_path, self.tree_max_depth, folders_only
         )
         self.folder_count = self._count_folders(tree)
+        print(f"Tree structure built successfully with {self.folder_count} folders", file=sys.stderr)
         return tree
 
     def _convert_structure_to_tree(
         self, structure: Dict, base_path: Path, max_depth: int = 10, folders_only: bool = False
     ) -> List[Dict]:
         children = []
+        is_network = self._is_network_path(str(base_path))
         
         # Include root files only if not folders_only mode
         if "root_files" in structure and not folders_only:
             for file_path in structure["root_files"]:
                 try:
-                    stat_info = file_path.stat()
-                    children.append(
-                        {
-                            "name": file_path.name,
-                            "path": str(file_path),
-                            "type": "file",
-                            "size": stat_info.st_size,
-                            "extension": file_path.suffix.lower(),
-                        }
-                    )
-                except:
+                    # For network paths, use a more robust stat approach with timeout handling
+                    if is_network:
+                        try:
+                            # Just get basic info without heavy stat calls for network paths
+                            children.append(
+                                {
+                                    "name": file_path.name,
+                                    "path": str(file_path),
+                                    "type": "file",
+                                    "size": 0,  # Skip size calculation for network performance
+                                    "extension": file_path.suffix.lower(),
+                                }
+                            )
+                        except Exception as e:
+                            print(f"Network file error (skipping): {e}", file=sys.stderr)
+                            continue
+                    else:
+                        # For local paths, get full stat info
+                        stat_info = file_path.stat()
+                        children.append(
+                            {
+                                "name": file_path.name,
+                                "path": str(file_path),
+                                "type": "file",
+                                "size": stat_info.st_size,
+                                "extension": file_path.suffix.lower(),
+                            }
+                        )
+                except Exception:
                     continue
         
         if max_depth > 0:
-            for dir_name, dir_data in structure.items():
+            # Process directories with progress reporting for large sets
+            dir_count = sum(1 for k in structure.keys() if k != "root_files")
+            if dir_count > 100:
+                print(f"Processing {dir_count} directories in tree structure...", file=sys.stderr)
+            
+            for i, (dir_name, dir_data) in enumerate(structure.items()):
                 if dir_name == "root_files":
                     continue
+                    
+                # Report progress for large directory sets
+                if dir_count > 100 and i % 50 == 0:
+                    print(f"Tree conversion progress: {i}/{dir_count} directories", file=sys.stderr)
+                    
                 dir_path = base_path / dir_name
                 dir_node = {"name": dir_name, "path": str(dir_path), "type": "folder"}
                 dir_children = []
@@ -616,17 +867,29 @@ class FileSystemScanner:
                 if not folders_only:
                     for file_path in dir_data["files"]:
                         try:
-                            stat_info = file_path.stat()
-                            dir_children.append(
-                                {
-                                    "name": file_path.name,
-                                    "path": str(file_path),
-                                    "type": "file",
-                                    "size": stat_info.st_size,
-                                    "extension": file_path.suffix.lower(),
-                                }
-                            )
-                        except:
+                            # Use the same network-aware approach for files in directories
+                            if is_network:
+                                dir_children.append(
+                                    {
+                                        "name": file_path.name,
+                                        "path": str(file_path),
+                                        "type": "file",
+                                        "size": 0,  # Skip size calculation for network performance
+                                        "extension": file_path.suffix.lower(),
+                                    }
+                                )
+                            else:
+                                stat_info = file_path.stat()
+                                dir_children.append(
+                                    {
+                                        "name": file_path.name,
+                                        "path": str(file_path),
+                                        "type": "file",
+                                        "size": stat_info.st_size,
+                                        "extension": file_path.suffix.lower(),
+                                    }
+                                )
+                        except Exception:
                             continue
                 
                 # Recursively process subdirectories

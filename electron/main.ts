@@ -9,14 +9,37 @@ import * as http from 'http';
 
 // Helper function to get resource paths that works in all environments
 function getResourcePath(relativePath: string): string {
+  let resourcePath: string;
+  
   if (isDev) {
-    return join(__dirname, '..', relativePath);
+    resourcePath = join(__dirname, '..', relativePath);
   } else {
-    // @ts-ignore
-    // In production, resources would normally be in process.resourcesPath
-    // But since we're in Google Drive, we'll use a relative path approach
-    return join(app.getAppPath(), relativePath);
+    // In production, use the resources directory
+    const appPath = app.getAppPath();
+    const resourcesPath = process.resourcesPath || appPath;
+    
+    // First try the resources path (for packaged app)
+    resourcePath = join(resourcesPath, relativePath);
+    
+    // If not found, try the app path (for development)
+    if (!existsSync(resourcePath)) {
+      resourcePath = join(appPath, relativePath);
+    }
+    
+    // If still not found, try one level up (for ASAR unpacked files)
+    if (!existsSync(resourcePath) && resourcesPath.endsWith('resources')) {
+      resourcePath = join(resourcesPath, '..', relativePath);
+    }
   }
+  
+  console.log(`🔍 Resource path for "${relativePath}": ${resourcePath}`);
+  if (!existsSync(resourcePath)) {
+    console.error(`❌ Resource not found: ${resourcePath}`);
+  } else {
+    console.log(`✅ Resource exists: ${resourcePath}`);
+  }
+  
+  return resourcePath;
 }
 
 let mainWindow: BrowserWindow | null = null;
@@ -58,56 +81,131 @@ async function createWindow(): Promise<void> {
   }, 2000);
 
   if (isDev) {
-    let viteUrl = 'http://localhost:3001'; // Default fallback
+    const DEFAULT_PORT = 3001;
+    let viteUrl = `http://localhost:${DEFAULT_PORT}`; // Default fallback
+    
+    // Function to check if server is responding
+    const isServerReady = async (url: string): Promise<boolean> => {
+      try {
+        const response = await fetch(`${url}/__port`);
+        return response.ok;
+      } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.log(`❌ Server not ready at ${url}:`, errorMessage);
+        return false;
+      }
+    };
+
     try {
-      // Read the port from Vite's port file
+      // Try to read the port from Vite's port file
       const portFilePath = join(__dirname, '../.vite-port');
       if (existsSync(portFilePath)) {
-        const portData = JSON.parse(readFileSync(portFilePath, 'utf8'));
-        viteUrl = portData.url || `http://localhost:${portData.port}`;
-        console.log(`📖 Read Vite URL from port file: ${viteUrl}`);
-        
-        // Add small delay to ensure Vite is fully ready
-        console.log('⏳ Waiting for Vite server to be ready...');
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        try {
+          const portData = JSON.parse(readFileSync(portFilePath, 'utf8'));
+          if (portData && portData.url) {
+            viteUrl = portData.url;
+            console.log(`📖 Read Vite URL from port file: ${viteUrl}`);
+          }
+        } catch (e) {
+          console.error('❌ Error parsing port file, using default port');
+        }
       } else {
         console.log('📄 No .vite-port file found, using default port 3001');
-        // Add delay even for default port
-        await new Promise(resolve => setTimeout(resolve, 2000));
       }
-    } catch (error) {
-      console.error('❌ Error reading Vite port file:', error);
+
+      // Wait for the server to be ready with retries
+      const MAX_RETRIES = 10;
+      let retries = 0;
+      let serverReady = false;
+
+      console.log(`⏳ Waiting for Vite server to be ready at ${viteUrl}...`);
+      
+      while (retries < MAX_RETRIES && !serverReady) {
+        serverReady = await isServerReady(viteUrl);
+        if (!serverReady) {
+          retries++;
+          console.log(`⏳ Waiting for Vite server (attempt ${retries}/${MAX_RETRIES})...`);
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
+
+      if (!serverReady) {
+        console.error(`❌ Vite server not ready after ${MAX_RETRIES} attempts`);
+        // Fall back to default port if different
+        if (!viteUrl.includes(`:${DEFAULT_PORT}`)) {
+          viteUrl = `http://localhost:${DEFAULT_PORT}`;
+          console.log(`🔄 Trying fallback URL: ${viteUrl}`);
+        }
+      } else {
+        console.log(`✅ Vite server is ready at ${viteUrl}`);
+      }
+    } catch (e: unknown) {
+      const errorMessage = e instanceof Error ? e.message : String(e);
+      console.error('❌ Error initializing Vite connection:', errorMessage);
     }
     
-    // Load the URL directly
+    // Load the URL with retries
     console.log(`🔗 Loading: ${viteUrl}`);
     
-    // More robust retry mechanism with multiple attempts
+    const MAX_LOAD_ATTEMPTS = 10;
     let loaded = false;
     let attempts = 0;
-    const maxAttempts = 5;
     
-    while (!loaded && attempts < maxAttempts) {
+    while (!loaded && attempts < MAX_LOAD_ATTEMPTS) {
       attempts++;
       try {
-        console.log(`🔄 Load attempt ${attempts}/${maxAttempts}...`);
-        await mainWindow.loadURL(viteUrl);
-        console.log(`✅ Successfully loaded: ${viteUrl} on attempt ${attempts}`);
-        loaded = true;
-      } catch (error) {
-        console.error(`❌ Attempt ${attempts} failed:`, error);
+        console.log(`🔄 Load attempt ${attempts}/${MAX_LOAD_ATTEMPTS}...`);
         
-        if (attempts < maxAttempts) {
-          // Increase delay with each attempt (exponential backoff)
-          const delay = 1000 * Math.pow(1.5, attempts);
+        // Clear any existing navigation state
+        mainWindow.webContents.stop();
+        
+        // Load the URL with a timeout
+        await Promise.race([
+          mainWindow.loadURL(viteUrl),
+          new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Load timeout')), 10000)
+          )
+        ]);
+        
+        // Verify the page loaded correctly
+        const pageTitle = await mainWindow.webContents.getTitle();
+        if (pageTitle && !pageTitle.includes('Error')) {
+          console.log(`✅ Successfully loaded: ${viteUrl} on attempt ${attempts}`);
+          loaded = true;
+          break;
+        } else {
+          throw new Error('Page loaded but title indicates an error');
+        }
+        
+      } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.error(`❌ Attempt ${attempts} failed:`, errorMessage);
+        
+        if (attempts < MAX_LOAD_ATTEMPTS) {
+          // Exponential backoff with jitter
+          const baseDelay = Math.min(1000 * Math.pow(2, attempts), 10000);
+          const jitter = Math.random() * 1000;
+          const delay = Math.floor(baseDelay + jitter);
+          
           console.log(`⏳ Waiting ${delay}ms before next attempt...`);
           await new Promise(resolve => setTimeout(resolve, delay));
+          
+          // Try to reconnect to the dev server
+          if (attempts % 3 === 0) {
+            console.log('🔄 Attempting to reconnect to dev server...');
+            try {
+              await fetch(`${viteUrl}/__port`, { method: 'HEAD' });
+              console.log('✅ Dev server is responding');
+            } catch (e) {
+              console.error('❌ Dev server is not responding, will retry...');
+            }
+          }
         }
       }
     }
     
     if (!loaded) {
-      console.error(`❌ All ${maxAttempts} load attempts failed`);
+      console.error(`❌ All ${MAX_LOAD_ATTEMPTS} load attempts failed`);
       
       // Fallback to default port if different
       if (viteUrl !== 'http://localhost:3001' && mainWindow && !mainWindow.isDestroyed()) {
@@ -161,7 +259,79 @@ async function createWindow(): Promise<void> {
     
     mainWindow.webContents.openDevTools();
   } else {
-    mainWindow.loadFile(join(__dirname, '../renderer/index.html'));
+    try {
+      // In production, try multiple possible locations for the renderer files
+      const possiblePaths = [
+        path.join(process.resourcesPath, 'app.asar.unpacked', 'dist', 'renderer', 'index.html'),
+        path.join(process.resourcesPath, 'app', 'dist', 'renderer', 'index.html'),
+        path.join(__dirname, '..', 'dist', 'renderer', 'index.html'),
+        path.join(app.getAppPath(), 'dist', 'renderer', 'index.html'),
+        path.join(process.cwd(), 'dist', 'renderer', 'index.html')
+      ];
+
+      let rendererPath = '';
+      for (const possiblePath of possiblePaths) {
+        console.log(`🔍 Checking for renderer at: ${possiblePath}`);
+        if (existsSync(possiblePath)) {
+          rendererPath = possiblePath;
+          console.log(`✅ Found renderer at: ${rendererPath}`);
+          break;
+        }
+      }
+
+      if (!rendererPath) {
+        throw new Error('Could not find renderer index.html in any expected location');
+      }
+
+      console.log(`🔗 Loading production file: ${rendererPath}`);
+      await mainWindow.loadFile(rendererPath);
+      console.log('✅ Successfully loaded renderer');
+    } catch (error) {
+      console.error('❌ Failed to load renderer:', error);
+      
+      // Define paths for error display
+      const errorPaths = [
+        path.join(process.resourcesPath, 'app.asar.unpacked', 'dist', 'renderer', 'index.html'),
+        path.join(process.resourcesPath, 'app', 'dist', 'renderer', 'index.html'),
+        path.join(__dirname, '..', 'dist', 'renderer', 'index.html'),
+        path.join(app.getAppPath(), 'dist', 'renderer', 'index.html'),
+        path.join(process.cwd(), 'dist', 'renderer', 'index.html')
+      ];
+      
+      // Show error page
+      const errorHtml = `
+        <html>
+          <head>
+            <title>Error Loading App</title>
+            <style>
+              body { font-family: Arial, sans-serif; padding: 20px; }
+              pre { background: #f5f5f5; padding: 15px; border-radius: 5px; overflow: auto; }
+              .error { color: #d32f2f; }
+            </style>
+          </head>
+          <body>
+            <h1>Error Loading Application</h1>
+            <p>The application failed to load. Please check the logs for more details.</p>
+            <h2>Error Details:</h2>
+            <pre>${error instanceof Error ? error.stack : String(error)}</pre>
+            <h3>Paths checked:</h3>
+            <pre>${JSON.stringify(errorPaths, null, 2)}</pre>
+            <h3>Current working directory:</h3>
+            <pre>${process.cwd()}</pre>
+            <h3>__dirname:</h3>
+            <pre>${__dirname}</pre>
+            <h3>app.getAppPath():</h3>
+            <pre>${app.getAppPath()}</pre>
+            <h3>process.resourcesPath:</h3>
+            <pre>${process.resourcesPath}</pre>
+          </body>
+        </html>
+      `;
+      
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        await mainWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(errorHtml)}`);
+      }
+    }
   }
 
   // Window shows immediately now
@@ -369,77 +539,204 @@ ipcMain.handle('python-scan-folder', async (_, folderPath: string) => {
   });
 });
 
+// Helper function to read mapping progress
+async function getMappingProgress(batchId: string): Promise<any> {
+  try {
+    // First check if we have WebSocket progress data
+    const progressDir = join(process.env.TEMP || '/tmp', 'folder_normalizer');
+    const progressFile = join(progressDir, `mapping_progress_${batchId}.json`);
+    
+    // Try to get the progress from the WebSocket server first
+    try {
+      // Check if we can get progress from the FileOperations class
+      const result = await new Promise((resolve, reject) => {
+        const pythonPath = getResourcePath('python/normalizer.py');
+        const python = spawn('py', [pythonPath, 'progress', batchId]);
+        
+        let output = '';
+        let error = '';
+        
+        python.stdout.on('data', (data) => {
+          output += data.toString();
+        });
+        
+        python.stderr.on('data', (data) => {
+          error += data.toString();
+        });
+        
+        python.on('close', (code) => {
+          if (code === 0) {
+            try {
+              resolve(JSON.parse(output));
+            } catch (e) {
+              reject(new Error(`Failed to parse progress output: ${e}`));
+            }
+          } else {
+            reject(new Error(`Python process exited with code ${code}: ${error}`));
+          }
+        });
+        
+        // Add timeout
+        setTimeout(() => {
+          reject(new Error('Timeout getting progress from Python'));
+        }, 3000);
+      });
+      
+      // If we got a valid result with the batch ID, return it
+      const typedResult = result as { batch_id?: string; [key: string]: any };
+      if (typedResult && typedResult.batch_id === batchId) {
+        return {
+          ...typedResult,
+          success: true
+        };
+      }
+    } catch (error: unknown) {
+      const wsError = error instanceof Error ? error : new Error(String(error));
+      console.log(`WebSocket progress not available: ${wsError.message}`);
+      // Continue to file-based fallback
+    }
+    
+    // Fallback to file-based progress
+    if (existsSync(progressFile)) {
+      const progressData = JSON.parse(readFileSync(progressFile, 'utf8'));
+      return {
+        ...progressData,
+        success: true
+      };
+    } else {
+      return {
+        success: false,
+        error: 'Progress data not found',
+        current: 0,
+        total: 100,
+        percentage: 0,
+        status: 'unknown'
+      };
+    }
+  } catch (error) {
+    console.error('Error reading mapping progress:', error);
+    return {
+      success: false,
+      error: String(error),
+      current: 0,
+      total: 100,
+      percentage: 0,
+      status: 'error'
+    };
+  }
+}
+
+// Handler to check mapping progress
+ipcMain.handle('python-get-mapping-progress', async (_, batchId: string) => {
+  return getMappingProgress(batchId);
+});
+
 ipcMain.handle('python-generate-mapping', async (_, tree: any, profile: any) => {
   return new Promise((resolve, reject) => {
+    // Generate a unique batch ID for tracking progress
+    const batchId = `map_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
+    
     const pythonPath = getResourcePath('python/normalizer.py');
     
     console.log('Python mapping - isDev:', isDev);
     console.log('Python path:', pythonPath);
-    console.log('Profile:', profile?.name);
-    console.log('Command:', 'py', [pythonPath, 'map']);
+    console.log('Batch ID:', batchId);
+    console.log('Profile:', profile.name);
     
-    // Debug the tree being sent
+    // Prepare the input data
+    const inputData = {
+      tree,
+      profile,
+      batchId
+    };
+    
+    // Convert to JSON string
+    const inputJson = JSON.stringify(inputData);
+    
+    console.log('Command:', 'py', [
+      pythonPath,
+      'map'
+    ]);
+    
+    // Debug the tree structure
     console.log('Tree being sent to Python:');
     console.log('  Tree type:', typeof tree);
-    console.log('  Tree keys:', tree ? Object.keys(tree) : 'null/undefined');
-    console.log('  Tree name:', tree?.name || 'NO NAME');
-    console.log('  Tree type field:', tree?.type || 'NO TYPE');
-    console.log('  Tree children count:', tree?.children?.length || 0);
-    
-    if (tree?.children && tree.children.length > 0) {
-      console.log('  First few children:');
-      for (let i = 0; i < Math.min(3, tree.children.length); i++) {
-        const child = tree.children[i];
-        console.log(`    Child ${i+1}: ${child?.name || 'NO NAME'} (type: ${child?.type || 'NO TYPE'}, children: ${child?.children?.length || 0})`);
-      }
+    console.log('  Tree keys:', Object.keys(tree));
+    console.log('  Tree name:', tree.name);
+    console.log('  Tree type field:', tree.type);
+    console.log('  Tree children count:', tree.children?.length || 0);
+    console.log('  First few children:');
+    if (tree.children && tree.children.length > 0) {
+      tree.children.slice(0, 3).forEach((child: any, index: number) => {
+        console.log(`    Child ${index + 1}: ${child.name} (type: ${child.type}, children: ${child.children?.length || 0})`);
+      });
     }
     
-    // Check if tree has the expected structure
-    if (!tree || typeof tree !== 'object') {
-      console.error('ERROR: Tree is not a valid object!');
-      resolve([]);
-      return;
-    }
-    
-    if (!tree.name || !tree.type) {
-      console.error('ERROR: Tree missing required fields (name, type)!');
-      console.log('Tree object:', JSON.stringify(tree, null, 2).substring(0, 500) + '...');
-      resolve([]);
-      return;
-    }
+    // Log the size of the input data
+    console.log('Input data size:', inputJson.length, 'characters');
+    console.log('Input data preview:', inputJson.substring(0, 500) + '...');
     
     const python = spawn('py', [pythonPath, 'map']);
-    let output = '';
-    let error = '';
-
-    const inputData = JSON.stringify({ tree, profile });
-    console.log('Input data size:', inputData.length, 'characters');
-    console.log('Input data preview:', inputData.substring(0, 500) + '...');
     
-    python.stdin.write(inputData);
-    python.stdin.end();
-
+    let stdoutData = '';
+    let stderrData = '';
+    let progressCheckInterval: NodeJS.Timeout | null = null;
+    let lastProgressUpdate = Date.now();
+    let isProcessingStuck = false;
+    
+    // Write the input data to the Python process stdin
+    python.stdin.write(inputJson);
+    python.stdin.end(); // Close the stdin stream to signal the end of input
+    console.log('Sent input data to Python process');
+    
+    // Setup progress checking
+    progressCheckInterval = setInterval(async () => {
+      try {
+        // Check if we have progress updates
+        const progress = await getMappingProgress(batchId);
+        if (progress && progress.timestamp) {
+          lastProgressUpdate = Date.now();
+          console.log(`Mapping progress: ${progress.percentage}% - ${progress.status} - ${progress.current_file || 'N/A'}`);
+        } else {
+          // Check if we haven't received updates for a while
+          const timeSinceLastUpdate = Date.now() - lastProgressUpdate;
+          if (timeSinceLastUpdate > 60000) { // 1 minute without updates
+            console.log(`No progress updates for ${timeSinceLastUpdate/1000} seconds, process may be stuck`);
+            isProcessingStuck = true;
+          }
+        }
+      } catch (error) {
+        console.log(`Error checking progress: ${error}`);
+      }
+    }, 5000); // Check every 5 seconds
+    
     python.stdout.on('data', (data) => {
       const chunk = data.toString();
-      console.log('Python mapping stdout chunk:', chunk.substring(0, 200) + (chunk.length > 200 ? '...' : ''));
-      output += chunk;
+      stdoutData += chunk;
     });
-
+    
     python.stderr.on('data', (data) => {
       const chunk = data.toString();
+      stderrData += chunk;
       console.log('Python mapping stderr:', chunk);
-      error += chunk;
+      // Reset the stuck timer if we're getting stderr output
+      lastProgressUpdate = Date.now();
     });
 
     python.on('close', (code) => {
+      // Clear the progress check interval
+      if (progressCheckInterval) {
+        clearInterval(progressCheckInterval);
+      }
+      
       console.log('Python mapping process closed with code:', code);
-      console.log('Mapping output length:', output.length);
-      console.log('Mapping error length:', error.length);
+      console.log('Mapping output length:', stdoutData.length);
+      console.log('Mapping error length:', stderrData.length);
       
       if (code === 0) {
         try {
           // Clean the output - remove any stderr messages that might be mixed in
-          const lines = output.split('\n');
+          const lines = stdoutData.split('\n');
           let jsonStart = -1;
           
           // Find the start of JSON output
@@ -466,35 +763,147 @@ ipcMain.handle('python-generate-mapping', async (_, tree: any, profile: any) => 
           console.log('Mapping result keys:', Object.keys(result));
           
           // Ensure we return the mappings array
-          const mappings = result.mappings || result || [];
+          let mappings = result.proposals || result.mappings || result || [];
           console.log('Returning mappings array with length:', Array.isArray(mappings) ? mappings.length : 'not an array');
+          
+          // Group sequences and transform mappings to include the node structure expected by the UI
+          if (Array.isArray(mappings)) {
+            // Improved sequence detection - look for sequence properties in multiple places
+            // Check all the different ways a sequence might be identified in the mapping data
+            const sequenceMappings = mappings.filter(mapping => {
+              // Check multiple possible locations for sequence identification
+              return mapping.type === 'sequence' || 
+                     (mapping.node && mapping.node.type === 'sequence') ||
+                     mapping.sequence || 
+                     (mapping.frameRange && mapping.frameCount);
+            });
+            
+            // Everything else is a single file
+            const singleFileMappings = mappings.filter(mapping => {
+              return !sequenceMappings.includes(mapping);
+            });
+            
+            console.log(`Found ${sequenceMappings.length} sequences and ${singleFileMappings.length} single files`);
+            console.log('Sample sequence mapping:', sequenceMappings.length > 0 ? JSON.stringify(sequenceMappings[0]).substring(0, 500) : 'none');
+            
+            // Process sequences
+            const processedSequences = sequenceMappings.map(sequence => {
+              // Extract sequence info from wherever it exists in the data structure
+              const seqData = sequence.sequence || sequence;
+              const baseName = seqData.base_name || sequence.name || '';
+              const frameRange = seqData.frame_range || sequence.frameRange || '';
+              const frameCount = seqData.frame_count || sequence.frameCount || 0;
+              const suffix = seqData.suffix || '';
+              
+              console.log(`Processing sequence: ${baseName} [${frameRange}]`);
+              
+              // Create a proper mapping object for the sequence
+              return {
+                id: `seq-${baseName}-${Date.now()}`,
+                sourcePath: sequence.sourcePath || seqData.directory || '',
+                targetPath: sequence.targetPath || sequence.destination || '',
+                status: sequence.status || 'auto',
+                type: 'sequence',
+                isSequence: true,
+                frameRange: frameRange,
+                frameCount: frameCount,
+                // Store all the original sequence properties
+                ...sequence,
+                // Create the node structure expected by the UI
+                node: {
+                  name: `${baseName}${suffix} [${frameRange}]`,
+                  path: sequence.sourcePath || seqData.directory || '',
+                  type: 'sequence',
+                  extension: seqData.extension || '',
+                  children: [], // Empty array for safety
+                  frameRange: frameRange,
+                  frameCount: frameCount
+                }
+              };
+            });
+            
+            // Process single files
+            const processedSingleFiles = singleFileMappings.map(mapping => {
+              // Create a valid mapping object with all required properties
+              const enhancedMapping = {
+                ...mapping,
+                // Ensure targetPath exists and is a string
+                targetPath: mapping.destination || mapping.targetPath || '',
+                // Add source path if missing
+                source: mapping.source || ''
+              };
+              
+              // If mapping doesn't have a node property, create one
+              if (!enhancedMapping.node) {
+                // Extract filename from source path
+                const filename = enhancedMapping.source ? 
+                  (enhancedMapping.source.split('/').pop() || 
+                   enhancedMapping.source.split('\\').pop() || 'Unknown') : 'Unknown';
+                   
+                // Get file extension
+                const extMatch = filename.match(/\.[^.\\/:*?"<>|]+$/i);
+                const extension = extMatch ? extMatch[0].toLowerCase() : '';
+                
+                enhancedMapping.node = {
+                  name: filename,
+                  path: enhancedMapping.source || '',
+                  type: 'file',
+                  extension: extension, // Add extension for file type detection
+                  children: [] // Empty array to prevent null reference errors
+                };
+              }
+              
+              return enhancedMapping;
+            });
+            
+            // Combine sequences and single files
+            mappings = [...processedSequences, ...processedSingleFiles];
+            console.log(`Returning ${mappings.length} total mappings with ${processedSequences.length} sequences`);
+          }
           
           resolve(Array.isArray(mappings) ? mappings : []);
         } catch (e) {
           console.error('Mapping JSON parse error:', e);
-          console.log('Raw mapping output preview:', output.substring(0, 1000));
-          resolve([]); // Return empty array instead of rejecting
+          console.log('Raw mapping output preview:', stdoutData.substring(0, 1000));
+          if (isProcessingStuck) {
+            reject(new Error(`Mapping process appears to be stuck. The operation was terminated. This may happen with very large folders or when there are issues with file access.`));
+          } else {
+            resolve([]); // Return empty array instead of rejecting
+          }
         }
       } else {
         console.error('Python mapping process failed with code:', code);
-        console.error('Mapping error output:', error);
-        resolve([]); // Return empty array instead of rejecting
+        console.error('Mapping error output:', stderrData);
+        if (isProcessingStuck) {
+          reject(new Error(`Mapping process appears to be stuck. The operation was terminated. This may happen with very large folders or when there are issues with file access.`));
+        } else {
+          resolve([]); // Return empty array instead of rejecting
+        }
       }
     });
 
     python.on('error', (err) => {
+      // Clear the progress check interval
+      if (progressCheckInterval) {
+        clearInterval(progressCheckInterval);
+      }
       console.error('Python mapping process spawn error:', err);
-      resolve([]); // Return empty array instead of rejecting
+      reject(new Error(`Failed to start Python mapping process: ${err.message}`));
     });
 
     // Add timeout to prevent hanging
+    const timeoutDuration = 180000; // 3 minutes timeout
     setTimeout(() => {
       if (!python.killed) {
-        console.log('Killing Python mapping process due to timeout');
+        console.log(`Killing Python mapping process due to timeout after ${timeoutDuration/1000} seconds`);
+        // Clear the progress check interval
+        if (progressCheckInterval) {
+          clearInterval(progressCheckInterval);
+        }
         python.kill();
-        resolve([]); // Return empty array instead of rejecting
+        reject(new Error(`Mapping process timed out after ${timeoutDuration/1000} seconds. This may happen with very large folders or when there are issues with file access.`));
       }
-    }, 120000); // 2 minutes timeout
+    }, timeoutDuration);
   });
 });
 

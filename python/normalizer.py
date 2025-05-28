@@ -9,13 +9,15 @@ for VFX folder normalization workflows.
 import os
 import sys
 import json
-import sqlite3
 import argparse
+import traceback
 import uuid
 import subprocess
 import shutil
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
+import sqlite3
+import asyncio
 from datetime import datetime
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -39,6 +41,25 @@ except ImportError:
     from scanner import FileSystemScanner
     from mapping import MappingGenerator
     from fileops import FileOperations
+
+
+def count_files_in_tree(tree: Dict[str, Any]) -> int:
+    """Count the total number of files in a file system tree."""
+    if not tree or not isinstance(tree, dict):
+        return 0
+    
+    count = 0
+    # If this node is a file, count it
+    if tree.get('type') == 'file':
+        count += 1
+    
+    # Recursively count files in children
+    children = tree.get('children', [])
+    if children and isinstance(children, list):
+        for child in children:
+            count += count_files_in_tree(child)
+    
+    return count
 
 
 def create_test_data() -> Dict[str, Any]:
@@ -194,11 +215,13 @@ def main():
             input_data = json.loads(sys.stdin.read())
             tree = input_data["tree"]
             profile = input_data["profile"]
+            batch_id = input_data.get("batchId", None)
 
             # Debug the received data
             print(
                 f"Received input data keys: {list(input_data.keys())}", file=sys.stderr
             )
+            print(f"Batch ID: {batch_id}", file=sys.stderr)
             print(
                 f"Tree type: {type(tree)}, Tree keys: {list(tree.keys()) if isinstance(tree, dict) else 'Not a dict'}",
                 file=sys.stderr,
@@ -249,11 +272,138 @@ def main():
                     file=sys.stderr,
                 )
 
+            # Start the WebSocket server before generating mappings
+            websocket_available = False
+            try:
+                # Import here to avoid circular imports
+                try:
+                    from .progress_server import start_progress_server, check_server_health, get_websocket_port, SERVER_STARTED
+                    import time
+                    websocket_available = True
+                    print("[INFO] Using Python WebSocket server for progress updates", file=sys.stderr)
+                except ImportError:
+                    try:
+                        from progress_server import start_progress_server, check_server_health, get_websocket_port, SERVER_STARTED
+                        import time
+                        websocket_available = True
+                        print("[INFO] Using Python WebSocket server for progress updates", file=sys.stderr)
+                    except ImportError:
+                        print("[WARNING] WebSocket progress functionality not available for mapping", file=sys.stderr)
+                        websocket_available = False
+                
+                if websocket_available:
+                    try:
+                        # Check if server is already running
+                        if SERVER_STARTED:
+                            print("[INFO] WebSocket server already running", file=sys.stderr)
+                            server_started = True
+                        else:
+                            print("[INFO] WebSocket server not running, attempting to start...", file=sys.stderr)
+                            server_started = start_progress_server()
+                            # Give the server a moment to initialize
+                            time.sleep(1.0)
+                            
+                        if server_started:
+                            print(f"[INFO] WebSocket server started successfully on port {get_websocket_port()}", file=sys.stderr)
+                            # Check server health
+                            health = check_server_health()
+                            print(f"[INFO] WebSocket server health: {health}", file=sys.stderr)
+                        else:
+                            print("[WARNING] WebSocket server failed to start", file=sys.stderr)
+                    except Exception as e:
+                        print(f"[ERROR] Failed to start WebSocket server: {str(e)}", file=sys.stderr)
+                        websocket_available = False
+            except Exception as e:
+                print(f"[ERROR] Failed to start WebSocket server for mapping: {str(e)}", file=sys.stderr)
+                websocket_available = False
+            
             generator = MappingGenerator()
-            generator._init_patterns_from_profile(profile)
-            mappings = generator.generate_mappings(tree, profile)
+            # Generate mappings with batch ID for progress tracking
+            mappings = []
+            total_files = 0
+            error_occurred = False
+            error_message = ""
+            
+            try:
+                # Initialize progress for WebSocket if available
+                if websocket_available:
+                    try:
+                        from progress_server import send_progress_update
+                        # Send initial progress update
+                        total_files = count_files_in_tree(tree)
+                        print(f"[INFO] Starting mapping of {total_files} files with batch ID: {batch_id}", file=sys.stderr)
+                        
+                        # Ensure batch_id includes a prefix for operation type if not already present
+                        actual_batch_id = batch_id
+                        if batch_id and '-' not in batch_id:
+                            actual_batch_id = f"map-{batch_id}"
+                            
+                        send_progress_update(actual_batch_id, 0, total_files, "", "starting")
+                    except Exception as e:
+                        print(f"[WARNING] Could not send initial progress update: {str(e)}", file=sys.stderr)
+                        websocket_available = False
+                
+                # Generate the mappings - check if the method accepts websocket_available parameter
+                try:
+                    # Try with websocket_available parameter
+                    mappings = generator.generate_mappings(tree, profile, batch_id, websocket_available=websocket_available)
+                except TypeError:
+                    # Fall back to original method signature if it doesn't accept the parameter
+                    print("[INFO] MappingGenerator doesn't accept websocket_available, using standard call", file=sys.stderr)
+                    mappings = generator.generate_mappings(tree, profile, batch_id)
+                
+                # Send final progress update if WebSocket is available
+                if websocket_available:
+                    try:
+                        from progress_server import send_progress_update
+                        # Ensure batch_id includes a prefix for operation type if not already present
+                        actual_batch_id = batch_id
+                        if batch_id and '-' not in batch_id:
+                            actual_batch_id = f"map-{batch_id}"
+                            
+                        send_progress_update(actual_batch_id, total_files, total_files, "", "completed")
+                        print(f"[INFO] Mapping completed for batch ID: {batch_id}", file=sys.stderr)
+                    except Exception as e:
+                        print(f"[WARNING] Could not send completion progress update: {str(e)}", file=sys.stderr)
+            except Exception as e:
+                error_occurred = True
+                error_message = str(e)
+                print(f"[ERROR] Failed to generate mappings: {error_message}", file=sys.stderr)
+                # Ensure traceback is imported
+                try:
+                    import traceback
+                    trace = traceback.format_exc()
+                    print(trace, file=sys.stderr)
+                    error_message = f"{error_message}\n{trace}"
+                except Exception as trace_error:
+                    print(f"[ERROR] Failed to get traceback: {str(trace_error)}", file=sys.stderr)
+                
+                # Send error status through WebSocket if available
+                if websocket_available:
+                    try:
+                        from progress_server import send_progress_update
+                        # Ensure batch_id includes a prefix for operation type if not already present
+                        actual_batch_id = batch_id
+                        if batch_id and '-' not in batch_id:
+                            actual_batch_id = f"map-{batch_id}"
+                        
+                        send_progress_update(actual_batch_id, 0, 1, "", "error")
+                    except Exception as e_progress:
+                        print(f"[WARNING] Could not send error progress update: {str(e_progress)}", file=sys.stderr)
 
-            print(json.dumps({"success": True, "mappings": mappings}, indent=2))
+            # Return the mappings or error message
+            if error_occurred:
+                print(json.dumps({
+                    "success": False, 
+                    "error": error_message, 
+                    "batchId": batch_id
+                }, indent=2))
+            else:
+                print(json.dumps({
+                    "success": True, 
+                    "proposals": mappings, 
+                    "batchId": batch_id
+                }, indent=2))
         except Exception as e:
             print(f"Mapping generation error details: {str(e)}", file=sys.stderr)
             print(f"Error type: {type(e)}", file=sys.stderr)

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { IconFolder, IconFolderOpen, IconFile, IconChevronRight, IconChevronDown, IconCheck, IconX, IconEdit, IconAlertTriangle } from '@tabler/icons-react';
+import { IconFolder, IconFolderOpen, IconFile, IconChevronRight, IconChevronDown, IconCheck, IconX, IconEdit, IconAlertTriangle, IconMovie } from '@tabler/icons-react';
 import { MappingProposal } from '../types';
 import { useAppStore } from '../store';
 
@@ -18,7 +18,8 @@ interface PreviewNodeProps {
 
 const PreviewNode: React.FC<PreviewNodeProps> = ({ proposal, level, checked, onCheck, onSelect, onEdit }) => {
   const [isExpanded, setIsExpanded] = useState(level < 2);
-  const hasChildren = proposal.node.children && proposal.node.children.length > 0;
+  // Add safety check for node and children properties
+  const hasChildren = proposal.node && proposal.node.children && proposal.node.children.length > 0;
 
   const handleToggle = () => {
     if (hasChildren) {
@@ -36,10 +37,10 @@ const PreviewNode: React.FC<PreviewNodeProps> = ({ proposal, level, checked, onC
   };
 
   const handleCheck = (e: React.ChangeEvent<HTMLInputElement>) => {
-    onCheck(proposal.id, e.target.checked);
+    onCheck(proposal.id || `mapping-${Math.random().toString(36).substring(2, 11)}`, e.target.checked);
   };
 
-  const getStatusIcon = (status: MappingProposal['status']) => {
+  const getStatusIcon = (status: MappingProposal['status'] | string) => {
     switch (status) {
       case 'auto':
         return <IconCheck size={14} className="status-auto" />;
@@ -52,14 +53,23 @@ const PreviewNode: React.FC<PreviewNodeProps> = ({ proposal, level, checked, onC
     }
   };
 
-  const getStatusClass = (status: MappingProposal['status']) => {
+  const getStatusClass = (status: MappingProposal['status'] | undefined) => {
+    if (!status) return 'mapping-status-unknown';
     return `mapping-status-${status}`;
   };
 
-  const getFileTypeIcon = (node: MappingProposal['node']) => {
+  const getFileTypeIcon = (node: MappingProposal['node'] | undefined) => {
+    if (!node) return <IconFile size={16} />;
+    
     if (node.type === 'folder') {
       return isExpanded ? <IconFolderOpen size={16} /> : <IconFolder size={16} />;
     }
+    
+    // Special icon for sequences
+    if (node.type === 'sequence') {
+      return <IconMovie size={16} />;
+    }
+    
     return <IconFile size={16} />;
   };
 
@@ -73,16 +83,22 @@ const PreviewNode: React.FC<PreviewNodeProps> = ({ proposal, level, checked, onC
     return 'file-type-other';
   };
 
-  const formatPath = (path: string) => {
+  const formatPath = (path: string | undefined | null) => {
+    // Handle undefined, null, or empty paths
+    if (!path) return '';
+    
+    // Normalize path separators
+    const normalizedPath = path.replace(/\\/g, '/');
+    
     // Show relative path from VFX root
-    const parts = path.split('/');
+    const parts = normalizedPath.split('/');
     return parts.slice(-3).join('/'); // Show last 3 parts
   };
 
   return (
     <div className="preview-node">
       <div 
-        className={`preview-node-content ${getStatusClass(proposal.status)} ${getFileTypeClass(proposal.node.extension)}`}
+        className={`preview-node-content ${getStatusClass(proposal.status || 'unknown')} ${getFileTypeClass(proposal.node?.extension)}`}
         style={{ paddingLeft: `${level * 20 + 8}px` }}
         onClick={handleSelect}
       >
@@ -102,7 +118,7 @@ const PreviewNode: React.FC<PreviewNodeProps> = ({ proposal, level, checked, onC
         </div>
         
         <div className="preview-node-status">
-          {getStatusIcon(proposal.status)}
+          {getStatusIcon(proposal.status || 'unknown')}
         </div>
         
         <div className="preview-node-icon">
@@ -110,14 +126,22 @@ const PreviewNode: React.FC<PreviewNodeProps> = ({ proposal, level, checked, onC
         </div>
         
         <div className="preview-node-info">
-          <div className="preview-node-name">{proposal.node.name}</div>
+          <div className="preview-node-name">{proposal.node?.name || 'Unknown'}</div>
           <div className="preview-node-path">{formatPath(proposal.targetPath)}</div>
-          {(proposal.shot || proposal.task || proposal.version) && (
+          {(proposal.shot || proposal.task || proposal.version || proposal.resolution || proposal.isSequence) && (
             <div className="preview-node-metadata">
               {proposal.shot && <span className="metadata-shot">Shot: {proposal.shot}</span>}
               {proposal.task && <span className="metadata-task">Task: {proposal.task}</span>}
               {proposal.version && <span className="metadata-version">v{proposal.version}</span>}
               {proposal.resolution && <span className="metadata-resolution">{proposal.resolution}</span>}
+              {/* Enhanced sequence detection - check multiple possible locations for sequence data */}
+              {(proposal.isSequence || proposal.type === 'sequence' || (proposal.node?.type === 'sequence') || proposal.sequence) && (
+                <span className="metadata-sequence">
+                  <IconMovie size={12} style={{ marginRight: '4px' }} />
+                  {proposal.frameRange || proposal.node?.frameRange || (proposal.sequence?.frame_range) || 'Sequence'} 
+                  ({proposal.frameCount || proposal.node?.frameCount || proposal.sequence?.frame_count || 0} frames)
+                </span>
+              )}
             </div>
           )}
         </div>

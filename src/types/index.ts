@@ -7,6 +7,9 @@ export interface FileSystemNode {
   children?: FileSystemNode[];
   frame_range?: [number, number];
   frame_count?: number;
+  // Add camelCase versions for consistency with the rest of the codebase
+  frameRange?: string;
+  frameCount?: number;
   total_size?: number;
   sequence_info?: SequenceInfo;
 }
@@ -35,6 +38,20 @@ export interface MappingProposal {
   sequenceInfo?: SequenceInfo;
   asset?: string;
   stage?: string;
+  frameRange?: string;
+  frameCount?: number;
+  source?: string;
+  destination?: string;
+  type?: 'file' | 'folder' | 'sequence'; // Add type property to match Python's output
+  sequence?: { // Add sequence property to handle Python sequence metadata
+    base_name?: string;
+    suffix?: string;
+    frame_range?: string;
+    frame_count?: number;
+    frame_numbers?: number[];
+    directory?: string;
+    extension?: string;
+  };
 }
 
 export interface BatchOperation {

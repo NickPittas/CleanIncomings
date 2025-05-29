@@ -9,77 +9,25 @@ import queue
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Any, Optional, Set, Tuple
 
-# Import the progress monitoring system
-try:
-    from progress_server import (
-        start_progress_server,
-        send_progress_update,
-        stop_progress_server,
-        check_server_health
-    )
-    WEBSOCKET_AVAILABLE = True
-    
-    # Add compatibility functions
-    def is_server_running():
-        """Check if server is running"""
-        health = check_server_health()
-        return health.get('running', False)
-        
-    def open_progress_viewer():
-        """Open progress viewer (not implemented in progress_server)"""
-        print("[INFO] Progress viewer not available with progress_server", file=sys.stderr)
-        
-except ImportError:
-    WEBSOCKET_AVAILABLE = False
-    print("[WARNING] WebSocket progress server not available", file=sys.stderr)
-
 
 class FileOperations:
     """Handles file move/copy operations, conflict detection, and progress tracking."""
 
-    def __init__(self, start_websocket=False, debug_mode=False, show_progress=False):
+    def __init__(self, debug_mode=False):
         """Initialize FileOperations
         
         Args:
-            start_websocket: Whether to start the WebSocket server
             debug_mode: Enable additional debug logging
-            show_progress: Open the progress viewer in browser
         """
         self.debug_mode = debug_mode
         self.progress_dir = os.path.join(os.path.dirname(__file__), "_progress")
         os.makedirs(self.progress_dir, exist_ok=True)
         self.cancelled_operations = set()  # Track cancelled batch IDs
         self.active_threads = {}  # Track active operation threads for force-kill
-        self.use_websocket = WEBSOCKET_AVAILABLE
         
         if self.debug_mode:
             print("[DEBUG] FileOperations initialized with debug mode", file=sys.stderr)
             print(f"[DEBUG] Progress directory: {self.progress_dir}", file=sys.stderr)
-        
-        # Start WebSocket server only if explicitly requested
-        if start_websocket and WEBSOCKET_AVAILABLE:
-            # Check if server is already running
-            if is_server_running():
-                print("[INFO] WebSocket progress server is already running", file=sys.stderr)
-                if show_progress:
-                    open_progress_viewer()
-            else:
-                try:
-                    print("[INFO] Starting WebSocket progress server...", file=sys.stderr)
-                    success = start_progress_server()
-                    if success:
-                        print("[INFO] WebSocket progress server started successfully", file=sys.stderr)
-                        if show_progress:
-                            open_progress_viewer()
-                    else:
-                        print("[WARNING] WebSocket server failed to start", file=sys.stderr)
-                except Exception as e:
-                    print(f"[WARNING] Failed to start WebSocket server: {e}", file=sys.stderr)
-                    self.use_websocket = False
-        else:
-            if self.debug_mode:
-                reason = "not requested" if not start_websocket else "not available"
-                print(f"[DEBUG] WebSocket server not started ({reason})", file=sys.stderr)
 
     def _progress_path(self, batch_id: str) -> str:
         return os.path.join(self.progress_dir, f"progress_{batch_id}.json")
@@ -276,24 +224,45 @@ class FileOperations:
         
         print(f"[MULTITHREAD] _multithreaded_copy called with src={src}, dst={dst}", file=sys.stderr)
         # Verify source file exists
+        print(f"[MULTITHREAD] Checking source file: {src}", file=sys.stderr)
         if not os.path.exists(src):
+            print(f"[ERROR][MULTITHREAD] Source file does not exist: {src}", file=sys.stderr)
             raise FileNotFoundError(f"Source file does not exist: {src}")
         
-        # Verify destination directory exists
+        # Get file size early for checks and small file optimization
+        file_size = os.path.getsize(src)
+        print(f"[MULTITHREAD] Source file size: {file_size} bytes", file=sys.stderr)
+
+        # Destination directory and permissions
         dst_dir = os.path.dirname(dst)
-        if not os.path.exists(dst_dir):
-            raise FileNotFoundError(f"Destination directory does not exist: {dst_dir}")
+        print(f"[MULTITHREAD] Determined destination directory for {dst}: {dst_dir}", file=sys.stderr)
+
+        # Verify write permissions to the path where the destination directory will be created.
+        # If dst_dir doesn't exist yet, check permission on its parent.
+        parent_check_path = os.path.dirname(dst_dir) if not os.path.exists(dst_dir) and os.path.dirname(dst_dir) != dst_dir else dst_dir
+        # Handle cases where dst_dir might be a root like 'D:\', making parent_check_path also 'D:\'
+        if not parent_check_path or parent_check_path == dst_dir and not os.path.exists(dst_dir):
+             # If dst_dir is 'D:\vfx' and doesn't exist, parent_check_path is 'D:\'. If 'D:\' doesn't exist, this is problematic.
+             # However, os.access on a non-existent path usually returns False. Let's ensure parent_check_path is valid for os.access.
+             # If dst_dir is 'D:\NewFolder', parent_check_path is 'D:\'.
+             # If dst_dir is 'NewFolder' (relative), parent_check_path is '.' (cwd).
+             drive, tail = os.path.splitdrive(dst_dir)
+             if drive and not tail: # It's a root like D:\
+                 parent_check_path = drive
+             elif not drive and not os.path.isabs(dst_dir): # relative path
+                 parent_check_path = "."
+
+        print(f"[MULTITHREAD] Checking write permissions for path: {parent_check_path}", file=sys.stderr)
+        if not os.access(parent_check_path, os.W_OK):
+            print(f"[ERROR][MULTITHREAD] No write permission to destination parent path: {parent_check_path} (to create {dst_dir})", file=sys.stderr)
+            raise PermissionError(f"No write permission to destination parent path: {parent_check_path} (to create {dst_dir})")
         
-        # Verify write permissions to destination directory
-        if not os.access(dst_dir, os.W_OK):
-            raise PermissionError(f"No write permission to destination directory: {dst_dir}")
-        
-        # Check for cancellation before starting
+        # Check for cancellation before starting any heavy work (like makedirs or small file copy)
         if batch_id and self.is_cancelled(batch_id):
+            print(f"[INFO][MULTITHREAD] Operation cancelled before starting copy of {src}", file=sys.stderr)
             raise Exception(f"Operation cancelled before copying {src}")
         
-        # Get file size
-        file_size = os.path.getsize(src)
+        # (The 'Verify destination directory exists' comment is now handled by os.makedirs logic below)
         
         # For small files (< 10MB), use single-threaded copy
         if file_size < 10 * 1024 * 1024:
@@ -332,7 +301,19 @@ class FileOperations:
         
         try:
             # Ensure destination directory exists
-            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            _dst_dir_for_makedirs = os.path.dirname(dst)
+            print(f"[INFO][MULTITHREAD] Attempting os.makedirs for: '{_dst_dir_for_makedirs}'", file=sys.stderr)
+            try:
+                os.makedirs(_dst_dir_for_makedirs, exist_ok=True)
+                print(f"[INFO][MULTITHREAD] Successfully created/ensured directory: '{_dst_dir_for_makedirs}'", file=sys.stderr)
+            except FileNotFoundError as e_fnf: 
+                print(f"[ERROR][MULTITHREAD] FileNotFoundError during os.makedirs('{_dst_dir_for_makedirs}'): {e_fnf}", file=sys.stderr)
+                print(f"[ERROR][MULTITHREAD] Exception details: type={type(e_fnf)}, args={e_fnf.args}, filename='{e_fnf.filename}', filename2='{e_fnf.filename2 if hasattr(e_fnf, 'filename2') else 'N/A'}' (strerror: {e_fnf.strerror}, winerror: {e_fnf.winerror if hasattr(e_fnf, 'winerror') else 'N/A'})")
+                raise
+            except OSError as e_os:
+                print(f"[ERROR][MULTITHREAD] OSError during os.makedirs('{_dst_dir_for_makedirs}'): {e_os}", file=sys.stderr)
+                print(f"[ERROR][MULTITHREAD] Exception details: type={type(e_os)}, args={e_os.args}, filename='{e_os.filename if hasattr(e_os, 'filename') else 'N/A'}' (strerror: {e_os.strerror if hasattr(e_os, 'strerror') else 'N/A'}, winerror: {e_os.winerror if hasattr(e_os, 'winerror') else 'N/A'})")
+                raise
             
             def copy_chunk(chunk_index: int, start_pos: int, chunk_size: int, cancel_event: threading.Event):
                 """Copy a specific chunk of the file"""
@@ -580,54 +561,14 @@ class FileOperations:
                 
                 self._write_progress(batch_id, progress)
                 
-                # Send WebSocket progress update if available and enabled
-                if WEBSOCKET_AVAILABLE and self.use_websocket:
-                    try:
-                        # Get current file and ensure it's a string
-                        current_file = progress.get("currentFile", "")
-                        if current_file is None:
-                            current_file = ""
-                        
-                        # Calculate speed if possible
-                        speed_mb_s = None
-                        if "startTime" in progress and "processedSize" in progress:
-                            elapsed = time.time() - progress["startTime"]
-                            if elapsed > 0:
-                                bytes_per_sec = progress["processedSize"] / elapsed
-                                speed_mb_s = bytes_per_sec / (1024 * 1024)  # Convert to MB/s
-                            
-                        # Send update with improved error handling
-                        send_progress_update(
-                            batch_id=batch_id,
-                            files_processed=files_processed,
-                            total_files=total_files,
-                            current_file=current_file,
-                            status=progress.get("status", "running")
-                        )
-                    except Exception as e:
-                        print(f"[WARNING] Failed to send WebSocket update: {e}", file=sys.stderr)
-        
         def process_single_file(src_file: str, dst_file: str, file_size: int, file_name: str):
             """Process a single file with multithreaded copy"""
             nonlocal files_processed
             
             try:
                 # Check for cancellation
-                if self.is_cancelled(batch_id):
+                if batch_id and self.is_cancelled(batch_id):
                     raise Exception("Operation cancelled")
-                
-                # Update current file
-                with files_lock:
-                    progress["currentFile"] = src_file
-                
-                # Ensure destination directory exists
-                dst_dir = os.path.dirname(dst_file)
-                print(f"[MULTITHREAD] Creating destination directory: {dst_dir}", file=sys.stderr)
-                try:
-                    os.makedirs(dst_dir, exist_ok=True)
-                    print(f"[MULTITHREAD] Destination directory created/verified successfully", file=sys.stderr)
-                except Exception as dir_error:
-                    print(f"[CRITICAL] Failed to create destination directory {dst_dir}: {dir_error}", file=sys.stderr)
                     raise
         
                 print(f"[MULTITHREAD] Processing file: {file_name} ({file_size} bytes)", file=sys.stderr)
@@ -961,19 +902,6 @@ class FileOperations:
             # Write to JSON file (for fallback)
             self._write_progress(batch_id, progress)
             
-            # Send WebSocket update for real-time progress
-            if WEBSOCKET_AVAILABLE:
-                try:
-                    send_progress_update(
-                        batch_id=batch_id,
-                        files_processed=files_processed,
-                        total_files=total_files,
-                        current_file=progress.get("currentFile", ""),
-                        status=progress.get("status", "running")
-                    )
-                except Exception as e:
-                    print(f"[WARNING] Failed to send WebSocket update: {e}", file=sys.stderr)
-        
         for i, mapping in enumerate(mappings):
             # Check for cancellation before processing each mapping
             if self.is_cancelled(batch_id):
@@ -998,7 +926,25 @@ class FileOperations:
                 progress["currentFile"] = src
                 # Ensure destination directory exists
                 if dst:
-                    os.makedirs(os.path.dirname(dst), exist_ok=True)
+                    dst_dir_for_mapping = os.path.dirname(dst)
+                    print(f"[INFO][APPLY_MAPPINGS_GENERIC_MAKEDIRS] Attempting os.makedirs for: '{dst_dir_for_mapping}' (src='{src}', dst='{dst}')", file=sys.stderr)
+                    try:
+                        os.makedirs(dst_dir_for_mapping, exist_ok=True)
+                        print(f"[INFO][APPLY_MAPPINGS_GENERIC_MAKEDIRS] Successfully created/ensured directory: '{dst_dir_for_mapping}'", file=sys.stderr)
+                    except FileNotFoundError as e_fnf:
+                        print(f"[ERROR][APPLY_MAPPINGS_GENERIC_MAKEDIRS] FileNotFoundError during os.makedirs('{dst_dir_for_mapping}'): {e_fnf}", file=sys.stderr)
+                        print(f"[ERROR][APPLY_MAPPINGS_GENERIC_MAKEDIRS] Exception details: type={type(e_fnf)}, args={e_fnf.args}, filename='{e_fnf.filename}', filename2='{getattr(e_fnf, 'filename2', 'N/A')}' (strerror: {e_fnf.strerror}, winerror: {getattr(e_fnf, 'winerror', 'N/A')})", file=sys.stderr)
+                        results.append({"id": mapping.get("id"), "success": False, "error": f"Failed to create destination directory {dst_dir_for_mapping}: {e_fnf}"})
+                        failed += 1
+                        update_progress_with_files() # Local helper function
+                        continue # Skip to next mapping
+                    except OSError as e_os:
+                        print(f"[ERROR][APPLY_MAPPINGS_GENERIC_MAKEDIRS] OSError during os.makedirs('{dst_dir_for_mapping}'): {e_os}", file=sys.stderr)
+                        print(f"[ERROR][APPLY_MAPPINGS_GENERIC_MAKEDIRS] Exception details: type={type(e_os)}, args={e_os.args}, filename='{getattr(e_os, 'filename', 'N/A')}' (strerror: {getattr(e_os, 'strerror', 'N/A')}, winerror: {getattr(e_os, 'winerror', 'N/A')})", file=sys.stderr)
+                        results.append({"id": mapping.get("id"), "success": False, "error": f"OSError creating destination directory {dst_dir_for_mapping}: {e_os}"})
+                        failed += 1
+                        update_progress_with_files() # Local helper function
+                        continue # Skip to next mapping
                 if mapping.get("type") == "sequence" and "sequence" in mapping:
                     # Handle image sequence: use the actual discovered file list
                     seq_info = mapping["sequence"]
@@ -1032,18 +978,6 @@ class FileOperations:
                             self._write_progress(batch_id, progress)
                             
                             # Send immediate WebSocket update
-                            if WEBSOCKET_AVAILABLE:
-                                try:
-                                    send_progress_update(
-                                        batch_id=batch_id,
-                                        files_processed=files_processed,
-                                        total_files=total_files,
-                                        current_file="",
-                                        status="cancelled"
-                                    )
-                                except Exception as e:
-                                    print(f"[WARNING] Failed to send WebSocket cancel update: {e}", file=sys.stderr)
-                            
                             return {
                                 "success": False,
                                 "success_count": completed,
@@ -1059,13 +993,8 @@ class FileOperations:
                         filename = file_info.get("name", "")
 
                         if not src_file or not os.path.exists(src_file):
-                            print(
-                                f"[DEBUG] Skipping file: source does not exist: {src_file}",
-                                file=sys.stderr,
-                            )
                             continue
-
-                        # Generate destination path for this specific file
+                        
                         dst_file = os.path.join(dst_dir, filename)
 
                         try:
@@ -1151,19 +1080,6 @@ class FileOperations:
                                 progress["status"] = "cancelled"
                                 progress["isCancelled"] = True
                                 self._write_progress(batch_id, progress)
-                                
-                                # Send immediate WebSocket update
-                                if WEBSOCKET_AVAILABLE:
-                                    try:
-                                        send_progress_update(
-                                            batch_id=batch_id,
-                                            files_processed=files_processed,
-                                            total_files=total_files,
-                                            current_file="",
-                                            status="cancelled"
-                                        )
-                                    except Exception as e:
-                                        print(f"[WARNING] Failed to send WebSocket cancel update: {e}", file=sys.stderr)
                                 
                                 return {
                                     "success": False,
@@ -1401,36 +1317,6 @@ class FileOperations:
             with open(progress_path, "w", encoding="utf-8") as f:
                 json.dump(progress, f)
             
-            # Send progress update via WebSocket
-            if self.use_websocket and WEBSOCKET_AVAILABLE:
-                try:
-                    # Extract required fields for WebSocket update
-                    current_file = progress.get("currentFile", "")
-                    status = progress.get("status", "running")
-                    
-                    # Get operation type from batch_id prefix
-                    operation_type = "unknown"
-                    if '-' in batch_id:
-                        operation_type = batch_id.split('-')[0]
-                    
-                    # Send extra fields like speed and file size
-                    extra_data = {}
-                    for key in ["processedSize", "totalSize", "speed", "remainingTime", "error", "warnings"]:
-                        if key in progress:
-                            extra_data[key] = progress[key]
-                    
-                    # Call the WebSocket progress update function
-                    print(f"[WEBSOCKET] Sending progress update for batch {batch_id}: {files_processed}/{total_files} ({percentage:.1f}%)", file=sys.stderr)
-                    send_progress_update(
-                        batch_id=batch_id,
-                        files_processed=files_processed,
-                        total_files=total_files,
-                        current_file=current_file,
-                        status=status
-                    )
-                except Exception as ws_error:
-                    # Don't fail the whole operation if WebSocket update fails
-                    print(f"[WARNING] Failed to send WebSocket progress update: {ws_error}", file=sys.stderr)
         except Exception as e:
             print(f"[ERROR] Failed to write progress: {e}", file=sys.stderr)
             import traceback
@@ -1474,21 +1360,6 @@ class FileOperations:
                 progress["currentFile"] = ""  # Clear current file since we're stopping
                 self._write_progress(batch_id, progress)
                 print(f"[FORCE CANCEL] Updated progress file for {batch_id}", file=sys.stderr)
-                
-                # 4. Send IMMEDIATE WebSocket update
-                if WEBSOCKET_AVAILABLE:
-                    try:
-                        from .progress_server import send_progress_update
-                        send_progress_update(
-                            batch_id=batch_id,
-                            files_processed=progress.get("filesProcessed", 0),
-                            total_files=progress.get("totalFiles", 0),
-                            current_file="",
-                            status="cancelled"
-                        )
-                        print(f"[FORCE CANCEL] Sent WebSocket cancellation update for {batch_id}", file=sys.stderr)
-                    except Exception as e:
-                        print(f"[WARNING] Failed to send WebSocket cancel update: {e}", file=sys.stderr)
                 
                 return {"success": True, "message": f"Operation {batch_id} FORCE CANCELLED immediately"}
             else:

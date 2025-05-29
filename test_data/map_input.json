@@ -1,0 +1,30 @@
+{
+  "tree": {
+    "name": "input",
+    "path": "g:\\My Drive\\python\\CleanIncomings\\test_data\\input",
+    "type": "folder",
+    "children": [
+      {
+        "name": "SAMPLE_SHOT_SC001_RENDER_MAIN_v001.1001.exr",
+        "path": "g:\\My Drive\\python\\CleanIncomings\\test_data\\input\\SAMPLE_SHOT_SC001_RENDER_MAIN_v001.1001.exr",
+        "type": "file",
+        "extension": "exr",
+        "size": 0 
+      }
+    ]
+  },
+  "profile": {
+    "name": "Test Profile for Version Fix",
+    "vfxRootPath": "/vfx/test_project",
+    "shot_patterns": ["SC\\\\d{3}"],
+    "task_patterns": ["RENDER", "MAIN"],
+    "version_patterns": ["v\\\\d{3}"],
+    "resolution_patterns": ["res\\\\d{1}k"],
+    "asset_patterns": ["ASSET\\\\d{2}"],
+    "stage_patterns": ["STAGE\\\\d{1}"],
+    "defaultTask": "general",
+    "destination_template_sequence": "{vfx_root}/{shot}/{task}/{version}/{resolution}/{base_name}.{frame_range}.{ext}",
+    "destination_template_file": "{vfx_root}/{shot}/{task}/{version}/{resolution}/{filename}"
+  },
+  "batchId": "test-version-fix-001"
+}

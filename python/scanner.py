@@ -13,19 +13,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from os import scandir
 import re
 
-# Import progress functionality using Python's progress_server only
-try:
-    from .progress_server import send_progress_update, start_progress_server, check_server_health, get_websocket_port, WEBSOCKET_AVAILABLE, SERVER_STARTED
-    print("[INFO] Using Python WebSocket server for progress updates", file=sys.stderr)
-except ImportError:
-    try:
-        from progress_server import send_progress_update, start_progress_server, check_server_health, get_websocket_port, WEBSOCKET_AVAILABLE, SERVER_STARTED
-        print("[INFO] Using Python WebSocket server for progress updates", file=sys.stderr)
-    except ImportError:
-        WEBSOCKET_AVAILABLE = False
-        SERVER_STARTED = False
-        print("[WARNING] WebSocket progress functionality not available for scanning", file=sys.stderr)
-
 
 class FileSystemScanner:
     """Scans file system and builds hierarchical tree structure, with real-time progress tracking."""
@@ -53,8 +40,6 @@ class FileSystemScanner:
         os.makedirs(self.progress_dir, exist_ok=True)
         self._scan_start_time = None
         self._scan_batch_id = None
-        self._last_websocket_update_time = 0
-        self._min_update_interval = 0.05  # Minimum 50ms between updates
         
         # Configure timeout and performance settings
         self.network_timeout = 15.0  # Seconds to wait for network operations
@@ -62,44 +47,30 @@ class FileSystemScanner:
         self.network_paths = ('\\\\', '//', 'N:', 'Z:', 'V:')  # Common network drive prefixes
         self.max_workers_local = 8  # Maximum worker threads for local paths
         self.max_workers_network = 4  # Maximum worker threads for network paths
-        
-        # --- AUTO-START LOGIC FOR WEBSOCKET SERVER ---
-        global WEBSOCKET_AVAILABLE, SERVER_STARTED
-        try:
-            if WEBSOCKET_AVAILABLE:
-                from progress_server import start_progress_server, check_server_health, get_websocket_port
-                health = check_server_health()
-                if not health.get('running', False):
-                    print("[INFO] WebSocket server not running, attempting to start...", file=sys.stderr)
-                    started = start_progress_server()
-                    time.sleep(0.5)
-                    health = check_server_health()
-                    if started and health.get('running', False):
-                        SERVER_STARTED = True
-                        print(f"[INFO] WebSocket server started on port {get_websocket_port()}", file=sys.stderr)
-                    else:
-                        SERVER_STARTED = False
-                        print("[ERROR] Failed to start WebSocket server for progress updates", file=sys.stderr)
-                else:
-                    SERVER_STARTED = True
-                    print(f"[INFO] WebSocket progress server already running on port {get_websocket_port()}", file=sys.stderr)
-            else:
-                SERVER_STARTED = False
-                print("[WARNING] WebSocket progress functionality not available", file=sys.stderr)
-        except Exception as e:
-            SERVER_STARTED = False
-            print(f"[ERROR] Exception during WebSocket server auto-start: {e}", file=sys.stderr)
-
-        # WebSocket server should already be running from main application
-        if WEBSOCKET_AVAILABLE and SERVER_STARTED:
-            print(f"[INFO] WebSocket progress functionality available for scanning on port {get_websocket_port()}", file=sys.stderr)
-        elif WEBSOCKET_AVAILABLE:
-            print("[WARNING] WebSocket server failed to start", file=sys.stderr)
-        else:
-            print("[WARNING] WebSocket progress functionality not available", file=sys.stderr)
 
     def _progress_path(self, batch_id: str) -> str:
         return os.path.join(self.progress_dir, f"progress_{batch_id}.json")
+
+    def get_scan_progress(self, batch_id: str) -> Dict[str, Any]:
+        """Reads and returns the progress data for a given batch_id from its JSON file."""
+        progress_file = self._progress_path(batch_id)
+        print(f"[DEBUG][get_scan_progress] Attempting to read: {progress_file}", flush=True)
+        try:
+            if os.path.exists(progress_file):
+                print(f"[DEBUG][get_scan_progress] File exists: {progress_file}", flush=True)
+                with open(progress_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    print(f"[DEBUG][get_scan_progress] Loaded data: {data}", flush=True)
+                    return data
+            else:
+                print(f"[DEBUG][get_scan_progress] File NOT found: {progress_file}. Returning 'pending'.", flush=True)
+                return {"batchId": batch_id, "status": "pending", "progressPercentage": 0, "result": None}
+        except json.JSONDecodeError as e_json:
+            print(f"[DEBUG][get_scan_progress] JSONDecodeError for {progress_file}: {e_json}. Returning 'failed'.", flush=True)
+            return {"batchId": batch_id, "status": "failed", "result": {"error": f"Malformed progress file: {e_json}"}}
+        except Exception as e:
+            print(f"[DEBUG][get_scan_progress] Exception for {progress_file}: {e}. Returning 'failed'.", flush=True)
+            return {"batchId": batch_id, "status": "failed", "result": {"error": f"Error reading progress file: {e}"}}
 
     def _write_progress(self, batch_id: str, progress: Dict[str, Any]):
         try:
@@ -108,66 +79,6 @@ class FileSystemScanner:
         except Exception as e:
             print(f"Failed to write scan progress: {e}", file=sys.stderr)
 
-    def _send_websocket_progress(self, batch_id: str, progress: Dict[str, Any]):
-        """Send real-time progress update via WebSocket"""
-        # Throttle updates to avoid overwhelming the WebSocket
-        current_time = time.time()
-        if current_time - self._last_websocket_update_time < self._min_update_interval:
-            return
-            
-        self._last_websocket_update_time = current_time
-        
-        if WEBSOCKET_AVAILABLE and SERVER_STARTED:
-            try:
-                # Calculate a more accurate estimate based on early scanning
-                total_files = progress.get("estimatedTotalFiles", 0) or 0
-                files_scanned = progress.get("totalFilesScanned", 0)
-                
-                # Dynamically adjust total estimate if we've already exceeded it
-                if files_scanned > total_files and files_scanned > 100:
-                    # We've found more files than estimated, increase estimate by 20% margin
-                    adjusted_estimate = int(files_scanned * 1.2)
-                    progress["estimatedTotalFiles"] = adjusted_estimate
-                    total_files = adjusted_estimate
-                
-                # Add scan-specific status information
-                current_file = progress.get("currentFile", "")
-                current_folder = progress.get("currentFolder", "")
-                detailed_status = progress.get("status", "running")
-                
-                # Provide more detailed file information for better UI feedback
-                if current_file and len(current_file) > 100:
-                    # Trim long paths for display
-                    display_file = "..." + current_file[-97:]
-                else:
-                    display_file = current_file
-                
-                # Convert scan progress to WebSocket format
-                send_progress_update(
-                    batch_id=batch_id,
-                    files_processed=files_scanned,
-                    total_files=total_files,
-                    current_file=display_file,
-                    status=detailed_status
-                )
-                
-                # Print confirmation of successful progress update periodically
-                if files_scanned % 5000 == 0 and files_scanned > 0:
-                    print(f"WebSocket progress update sent: {files_scanned}/{total_files} files", file=sys.stderr)
-                    
-            except Exception as e:
-                print(f"[WARNING] Failed to send WebSocket scan progress: {e}", file=sys.stderr)
-                # Only print full traceback for first few errors to avoid log spam
-                if self.file_count < 1000:  # Only show detailed errors in early scanning
-                    import traceback
-                    traceback.print_exc(file=sys.stderr)
-        else:
-            # Only print not available message once to reduce log spam
-            if progress.get('totalFilesScanned', 0) == 0:
-                if not WEBSOCKET_AVAILABLE:
-                    print(f"[WARNING] WebSocket module not available for scanning", file=sys.stderr)
-                elif not SERVER_STARTED:
-                    print(f"[WARNING] WebSocket server not running, scan progress updates will be limited", file=sys.stderr)
 
     def scan_directory_with_progress(
         self,
@@ -176,35 +87,21 @@ class FileSystemScanner:
         max_files: int = None,
         use_fast_scan: bool = True,
     ) -> str:
-        """
-        Start a scan and write progress to a file. Returns batch_id.
-        """
+        print("[DEBUG][SCANNER] Entered scan_directory_with_progress", file=sys.stderr)
+        sys.stderr.flush()
+
         if batch_id is None:
             batch_id = str(uuid.uuid4())
-        
-        # Ensure WebSocket server is running before we start scanning
-        if WEBSOCKET_AVAILABLE:
-            try:
-                print("[INFO] Starting WebSocket progress server...", file=sys.stderr)
-                server_started = start_progress_server()
-                if server_started:
-                    print(f"[INFO] WebSocket server started successfully on port {get_websocket_port()}", file=sys.stderr)
-                else:
-                    print("[WARNING] WebSocket server failed to start", file=sys.stderr)
-                    
-                # Check server health
-                health = check_server_health()
-                print(f"[INFO] WebSocket server health: {health}", file=sys.stderr)
-            except Exception as e:
-                print(f"[ERROR] Failed to start WebSocket server: {e}", file=sys.stderr)
+            print(f"[DEBUG][SCANNER] scan_directory_with_progress: No batch_id provided, generated new: {batch_id}", file=sys.stderr)
         else:
-            print("[WARNING] WebSocket progress functionality not available", file=sys.stderr)
-        
-        self._scan_batch_id = batch_id
+            print(f"[DEBUG][SCANNER] scan_directory_with_progress: Using provided batch_id: {batch_id}", file=sys.stderr)
+        sys.stderr.flush()
+
         self._scan_start_time = time.time()
+        self._scan_batch_id = batch_id
+        # Initial progress state
         self.file_count = 0
         self.folder_count = 0
-        self._last_websocket_update_time = 0
         
         # Check if path is a network path and adjust parameters
         is_network = self._is_network_path(path)
@@ -226,11 +123,9 @@ class FileSystemScanner:
             "status": "running",
             "startTime": self._scan_start_time,
             "result": None,
-            "estimatedTotalFiles": estimated_total,
-            "websocketPort": get_websocket_port() if WEBSOCKET_AVAILABLE else None,
+            "estimatedTotalFiles": estimated_total
         }
         self._write_progress(batch_id, progress)
-        self._send_websocket_progress(batch_id, progress)
         
         try:
             root_path = Path(path)
@@ -238,13 +133,11 @@ class FileSystemScanner:
                 progress["status"] = "failed"
                 progress["result"] = {"error": f"Path does not exist: {path}"}
                 self._write_progress(batch_id, progress)
-                self._send_websocket_progress(batch_id, progress)
                 return batch_id
             if not root_path.is_dir():
                 progress["status"] = "failed"
                 progress["result"] = {"error": f"Path is not a directory: {path}"}
                 self._write_progress(batch_id, progress)
-                self._send_websocket_progress(batch_id, progress)
                 return batch_id
             
             print(f"Starting scan with progress: {path}", file=sys.stderr)
@@ -271,12 +164,10 @@ class FileSystemScanner:
                         "progressPercentage": progress_percentage,
                         "etaSeconds": eta,
                         "status": "running",
-                        "estimatedTotalFiles": estimated_total,
-                        "websocketPort": get_websocket_port() if WEBSOCKET_AVAILABLE else None,
+                        "estimatedTotalFiles": estimated_total
                     }
                 )
                 self._write_progress(batch_id, progress)
-                self._send_websocket_progress(batch_id, progress)
 
             # Always use threaded scan for performance
             file_paths, dir_paths = [], []
@@ -320,6 +211,8 @@ class FileSystemScanner:
             
             # Final update before building tree
             update_progress()
+            progress["status"] = "building_tree"
+            self._write_progress(batch_id, progress)
             print(
                 f"[DEBUG] Scan loop completed. Files: {self.file_count}, Folders: {self.folder_count}",
                 file=sys.stderr,
@@ -339,18 +232,18 @@ class FileSystemScanner:
             
             # Final completion update
             progress["status"] = "completed"
-            progress["progressPercentage"] = 100.0
             progress["result"] = {"success": True, "tree": tree, "stats": stats}
+            progress["progressPercentage"] = 100.0
             progress["estimatedTotalFiles"] = self.file_count  # Update with actual count
             self._write_progress(batch_id, progress)
-            self._send_websocket_progress(batch_id, progress)
             
             print(f"[DEBUG] Progress written to file", file=sys.stderr)
         except Exception as e:
+            print(f"Scan failed: {e}", file=sys.stderr)
             progress["status"] = "failed"
-            progress["result"] = {"error": f"Failed to scan directory: {str(e)}"}
+            progress["result"] = {"error": str(e)}
+            progress["progressPercentage"] = 100.0 # Indicate completion, albeit failed
             self._write_progress(batch_id, progress)
-            self._send_websocket_progress(batch_id, progress)
         
         print(
             f"[DEBUG] scan_directory_with_progress: completed, returning batch_id={batch_id}",
@@ -363,10 +256,6 @@ class FileSystemScanner:
             with open(self._progress_path(batch_id), "r", encoding="utf-8") as f:
                 progress = json.load(f)
                 
-                # Always include the latest WebSocket port
-                if WEBSOCKET_AVAILABLE:
-                    progress["websocketPort"] = get_websocket_port()
-                    
                 return progress
         except Exception as e:
             return {"error": f"Failed to read scan progress: {e}"}
@@ -978,27 +867,48 @@ class FileSystemScanner:
             node["children"] = children
         return node
 
-# --- TEST CODE FOR SERVER STARTUP ---
+# --- TEST CODE FOR SCANNER ---
 if __name__ == "__main__":
-    print("[TEST] Initializing FileSystemScanner and triggering scan...")
+    import os
+    print("[TEST][scanner.py] Initializing FileSystemScanner...")
+    # Ensure progress_server is running independently for WebSocket updates.
+    # This __main__ block will test the scanning logic and its calls to send_progress_update.
+    
     scanner = FileSystemScanner()
-    # Use a small test directory or create one
-    test_dir = os.path.join(os.path.dirname(__file__), "_progress_test")
-    os.makedirs(test_dir, exist_ok=True)
-    # Create a dummy file
-    with open(os.path.join(test_dir, "dummy.txt"), "w") as f:
-        f.write("test")
-    batch_id = scanner.scan_directory_with_progress(test_dir)
-    print(f"[TEST] Scan started with batch_id: {batch_id}")
-    # Check WebSocket server health
+    
+    # Determine the path to the '_progress' directory relative to this script's location
+    # This script is in 'python/', so '_progress' is a sibling directory.
+    current_script_dir = os.path.dirname(os.path.abspath(__file__))
+    # Target directory for scanning is 'python/_progress/'
+    test_scan_path = os.path.join(current_script_dir, "_progress")
+
+    print(f"[TEST][scanner.py] Test scan path resolved to: {test_scan_path}")
+
+    if not os.path.exists(test_scan_path):
+        print(f"[TEST][scanner.py] Test scan path {test_scan_path} does not exist. Creating it for the test.")
+        os.makedirs(test_scan_path, exist_ok=True)
+        # Optionally, create a dummy file in it
+        with open(os.path.join(test_scan_path, "dummy_for_scan_test.txt"), "w") as f:
+            f.write("test content")
+
+    print(f"[TEST][scanner.py] Starting scan on directory: {test_scan_path}")
     try:
-        from progress_server import check_server_health, get_websocket_port
-        health = check_server_health()
-        print(f"[TEST] WebSocket server health: {health}")
-        if health.get('running', False):
-            print(f"[TEST] WebSocket server running on port {get_websocket_port()}")
-        else:
-            print("[TEST] WebSocket server is NOT running!")
+        # Scan the local '_progress' directory. It should be small.
+        # max_files can be small for this test.
+        batch_id_from_scan = scanner.scan_directory_with_progress(test_scan_path, max_files=50, use_fast_scan=False)
+        print(f"[TEST][scanner.py] Scan initiated. Batch ID: {batch_id_from_scan}")
+        
+        # The scan runs, and progress updates should be sent via WebSocket if server is active.
+        # We might not see the "completed" status here immediately if the scan is very fast 
+        # and this script exits before all async operations fully flush.
+        # The test_websocket_client.py is responsible for catching the updates.
+
+        # Give a moment for any final async messages to be processed by the server if it's running
+        import time
+        time.sleep(2) # Wait for 2 seconds
+        print(f"[TEST][scanner.py] Scan test in scanner.py finished for batch_id: {batch_id_from_scan}.")
+
     except Exception as e:
-        print(f"[TEST] Exception checking WebSocket server health: {e}")
-    print("[TEST] Done.")
+        print(f"[TEST][scanner.py] Error during scan test: {e}")
+        import traceback
+        traceback.print_exc()

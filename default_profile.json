@@ -1,0 +1,41 @@
+{
+  "name": "Default Test Profile",
+  "description": "A basic profile for testing.",
+  "version": "1.0",
+  "settings": {
+    "destination_path": "g:/My Drive/python/CleanIncomings/test_destination",
+    "create_missing_dirs": true,
+    "task_mapping_active": true,
+    "sequence_mapping_active": true,
+    "multithreaded_operations": {
+        "enabled": false,
+        "max_workers": 8,
+        "file_workers": 4
+    }
+  },
+  "patterns": [
+    {
+      "name": "Generic Shot Pattern",
+      "regex": "^(?P<shot_code>[A-Z0-9]+_S[A-Z0-9]+|TEST_SHOT)_?(?P<task_variant>[A-Z0-9_]+)?_(?P<version>V[0-9]+)(\..+)?$",
+      "type": "sequence",
+      "priority": 10,
+      "structure": [
+        {
+          "level": "shot_code",
+          "source": "shot_code"
+        },
+        {
+          "level": "task_variant",
+          "source": "task_variant"
+        }
+      ]
+    }
+  ],
+  "task_map": [
+    {
+      "keyword": "COMP",
+      "task_name": "Compositing",
+      "subfolder": "03_Comp"
+    }
+  ]
+}

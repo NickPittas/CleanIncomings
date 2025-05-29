@@ -1,5 +1,6 @@
 import os
 import sys
+import traceback
 from pathlib import Path
 from typing import List, Dict, Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -8,8 +9,6 @@ def generate_mappings(
     tree: Dict[str, Any],
     profile: Dict[str, Any],
     batch_id=None,
-    websocket_available=None,
-    update_mapping_progress=None,
     group_image_sequences=None,
     extract_sequence_info=None,
     is_network_path=None,
@@ -22,12 +21,12 @@ def generate_mappings(
     """
     print(f"=== MAPPING GENERATION STARTED ===", file=sys.stderr)
     print(f"Profile: {profile.get('name', 'Unknown')}", file=sys.stderr)
-    print(f"VFX Root: {profile.get('vfxRootPath', '/vfx/projects/default')}", file=sys.stderr)
+    print(f"VFX Root: {profile.get('vfx_root', '/vfx/projects/default')}", file=sys.stderr)
     print(f"Tree: {tree.get('name', 'Unknown')} (type: {tree.get('type', 'unknown')})", file=sys.stderr)
     children = tree.get("children", [])
     print(f"Processing {len(children)} items", file=sys.stderr)
     if batch_id:
-        update_mapping_progress(batch_id, 0, 100, status="initializing")
+        pass # Placeholder for removed progress update
     all_files = []
     if "_all_files" in tree and tree["_all_files"]:
         print(f"Using _all_files list from folders-only tree", file=sys.stderr)
@@ -58,13 +57,11 @@ def generate_mappings(
         collect_files(tree)
     print(f"Collected {len(all_files)} total files", file=sys.stderr)
     if batch_id:
-        update_mapping_progress(batch_id, 25, 100, status="files_collected")
+        pass # Placeholder for removed progress update
     sequences, single_files = group_image_sequences(
         all_files, batch_id, extract_sequence_info=extract_sequence_info, is_network_path=is_network_path
     )
     print(f"Found {len(sequences)} image sequences and {len(single_files)} single files", file=sys.stderr)
-    if batch_id:
-        update_mapping_progress(batch_id, 50, 100, status="generating_mappings")
     mappings = []
     total_items = len(sequences) + len(single_files)
     processed = 0
@@ -83,6 +80,11 @@ def generate_mappings(
                         if seq_info and seq_info.get("base_name"):
                             original_base_name = seq_info.get("base_name")
                             break
+                        filename = os.path.basename(file_item)
+                        seq_info = extract_sequence_info(filename)
+                        if seq_info and seq_info.get("base_name"):
+                            original_base_name = seq_info.get("base_name")
+                            break
                     elif isinstance(file_item, dict) and file_item.get("name"):
                         filename = file_item.get("name")
                         seq_info = extract_sequence_info(filename)
@@ -96,14 +98,6 @@ def generate_mappings(
             elif seq_mapping:
                 mappings.append(seq_mapping)
                 processed += 1
-            if batch_id and processed % max(1, min(100, len(sequences) // 10)) == 0:
-                progress = 50 + (processed / total_items * 25)
-                if isinstance(sequence, dict):
-                    current_file = f"{sequence.get('base_name', '')} {sequence.get('suffix', '')}"
-                else:
-                    current_file = "sequence_" + str(idx)
-                update_mapping_progress(batch_id, int(progress), 100, status="processing_sequences", current_file=current_file)
-                print(f"[PROGRESS] Sequence mapping: {idx+1}/{len(sequences)} ({(idx+1)/len(sequences)*100:.1f}%)", file=sys.stderr)
         except Exception as e:
             sequence_errors += 1
             seq_name = "unknown"
@@ -116,10 +110,9 @@ def generate_mappings(
                     seq_name = os.path.basename(sequence[0])
             continue
     if sequence_errors > 0:
-        print(f"[WARNING] Failed to process {sequence_errors} sequences", file=sys.stderr)
-    print(f"[INFO] Completed sequence processing, starting parallel file processing", file=sys.stderr)
+        print(f"[WARNING] [NICK]Failed to process {sequence_errors} sequences", file=sys.stderr)
     max_workers = min(16, os.cpu_count() * 2)
-    print(f"[INFO] Using {max_workers} parallel workers for file processing", file=sys.stderr)
+    print(f"[INFO] [NICK]Using {max_workers} parallel workers for file processing", file=sys.stderr)
     try:
         from concurrent.futures import ThreadPoolExecutor, as_completed
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -133,10 +126,9 @@ def generate_mappings(
                 except Exception as e:
                     file_errors += 1
                     file_name = future_to_file[future].get('name', 'unknown')
+                    print(f"[ERROR] Exception during mapping for file '{file_name}': {type(e).__name__} - {e}\n{traceback.format_exc()}", file=sys.stderr, flush=True)
                 if batch_id and i % max(1, min(500, len(single_files) // 20)) == 0:
-                    progress = 75 + (i / len(single_files) * 20)
-                    current_file = future_to_file[future].get('name', '')
-                    update_mapping_progress(batch_id, int(progress), 100, status="processing_files", current_file=current_file)
+                    # Progress update removed
                     print(f"[PROGRESS] File mapping: {i+1}/{len(single_files)} ({(i+1)/len(single_files)*100:.1f}%)", file=sys.stderr)
             if file_errors > 0:
                 print(f"[WARNING] Failed to process {file_errors} files", file=sys.stderr)
@@ -151,6 +143,4 @@ def generate_mappings(
     print(f"Single files: {len(mappings) - sequence_count}", file=sys.stderr)
     print(f"Auto-mapped: {auto_mapped}", file=sys.stderr)
     print(f"Manual required: {manual_mapped}", file=sys.stderr)
-    if batch_id:
-        update_mapping_progress(batch_id, 100, 100, status="complete")
     return mappings

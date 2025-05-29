@@ -1,0 +1,18 @@
+{
+    "tree": {
+        "name": "test_scan_project",
+        "path": "/test/scan_project",
+        "type": "folder",
+        "children": [
+            {
+                "name": "asset_001_model_v001.fbx",
+                "path": "/test/scan_project/asset_001_model_v001.fbx",
+                "type": "file",
+                "size": 1024,
+                "extension": ".fbx"
+            }
+        ]
+    },
+    "profile_name": "simple",
+    "batchId": "test-map-simple-123"
+}

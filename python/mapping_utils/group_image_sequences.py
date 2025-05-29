@@ -2,7 +2,6 @@ import time
 from pathlib import Path
 from typing import List, Dict, Any, Tuple
 from threading import Lock
-from mapping_utils.progress import update_mapping_progress
 
 # Set of extensions that can be part of an image sequence
 SEQUENCE_EXTENSIONS = set([
@@ -32,9 +31,6 @@ def group_image_sequences(files: List[Dict[str, Any]], batch_id=None, extract_se
     if total_files > 0 and "path" in files[0] and is_network_path:
         is_network = is_network_path(files[0]["path"])
     progress_update_interval = 0.2 if is_network else 0.5
-    last_progress_time = time.time()
-    if batch_id:
-        update_mapping_progress(batch_id, 0, total_files, status="grouping_sequences")
     def process_file_batch(batch_files, start_idx, progress_lock):
         local_processed = 0
         local_single_files = []
@@ -72,9 +68,6 @@ def group_image_sequences(files: List[Dict[str, Any]], batch_id=None, extract_se
             except Exception:
                 local_single_files.append(file_node)
             current_time = time.time()
-            if batch_id and ((i % progress_interval == 0) or (current_time - last_progress_time) > progress_update_interval):
-                update_mapping_progress(batch_id, i, total_files, status="grouping_sequences", current_file=file_node.get("name", ""))
-                last_progress_time = current_time
         with single_files_lock:
             single_files.extend(local_single_files)
         with file_groups_lock:
@@ -90,6 +83,4 @@ def group_image_sequences(files: List[Dict[str, Any]], batch_id=None, extract_se
             sequences.append({"base_name": seq_key[1], "suffix": seq_key[2], "files": group, "directory": seq_key[0], "frame_count": len(group)})
         else:
             single_files.extend(group)
-    if batch_id:
-        update_mapping_progress(batch_id, total_files, total_files, status="sequences_grouped")
     return sequences, single_files

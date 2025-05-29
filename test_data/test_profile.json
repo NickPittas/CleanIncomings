@@ -1,0 +1,13 @@
+{
+  "name": "Test Profile for Version Fix",
+  "vfxRootPath": "/vfx/test_project",
+  "shot_patterns": ["SC\\d{3}"],
+  "task_patterns": ["RENDER", "MAIN"],
+  "version_patterns": ["v\\d{3}"],
+  "resolution_patterns": ["res\\d{1}k"],
+  "asset_patterns": ["ASSET\\d{2}"],
+  "stage_patterns": ["STAGE\\d{1}"],
+  "defaultTask": "general",
+  "destination_template_sequence": "{vfx_root}/{shot}/{task}/{version}/{resolution}/{base_name}.{frame_range}.{ext}",
+  "destination_template_file": "{vfx_root}/{shot}/{task}/{version}/{resolution}/{filename}"
+}

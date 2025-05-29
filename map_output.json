@@ -1,0 +1,26 @@
+{
+  "success": true,
+  "proposals": [
+    {
+      "id": "b97c36d4-d82f-4ec0-8080-b9052ac0d648",
+      "name": "SAMPLE_SHOT_SC001_RENDER_MAIN_v001.1001.exr",
+      "sourcePath": "g:\\My Drive\\python\\CleanIncomings\\test_data\\input\\SAMPLE_SHOT_SC001_RENDER_MAIN_v001.1001.exr",
+      "targetPath": "G:\\vfx\\test_project\\3D\\SC001\\unmapped\\RENDER\\MAIN\\v001\\unmatched\\SAMPLE_SHOT_SC001_RENDER_MAIN_v001.1001.exr",
+      "status": "auto",
+      "shot": "SC001",
+      "asset": null,
+      "stage": "RENDER",
+      "task": "MAIN",
+      "version": "v001",
+      "resolution": null,
+      "node": {
+        "name": "SAMPLE_SHOT_SC001_RENDER_MAIN_v001.1001.exr",
+        "path": "g:\\My Drive\\python\\CleanIncomings\\test_data\\input\\SAMPLE_SHOT_SC001_RENDER_MAIN_v001.1001.exr",
+        "type": "file",
+        "size": 0,
+        "extension": "exr"
+      }
+    }
+  ],
+  "batchId": "test-version-fix-001"
+}

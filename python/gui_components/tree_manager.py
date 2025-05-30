@@ -140,6 +140,17 @@ class TreeManager:
                     self.app.status_manager.add_log_message(f"Item missing 'path' in recursive insert, cannot add to source tree: {item_data}", "WARNING")
                     continue
 
+                # Get appropriate icon from theme manager
+                if item_data.get('type') == 'folder':
+                    # Check if folder has children to determine open/closed icon
+                    has_children = 'children' in item_data and item_data['children']
+                    icon_text = self.app.theme_manager.get_icon_text("folder_closed")
+                    # Add spacing for better visibility
+                    display_name = f"{icon_text}  {name}"
+                else:
+                    # Skip files in source tree as before
+                    continue
+
                 if isinstance(size_bytes, (int, float)):
                     if size_bytes < 1024:
                         size_display = f"{size_bytes} B"
@@ -153,8 +164,8 @@ class TreeManager:
                     size_display = "N/A" if item_type_cap == "Folder" else ""
                 
                 if item_data.get('type') == 'folder':
-                    # Only insert and process children if the item is a folder
-                    node_id = self.app.source_tree.insert(parent_node_id, "end", iid=path, text=name, values=(item_type_cap, size_display), open=False)
+                    # Insert folder with icon
+                    node_id = self.app.source_tree.insert(parent_node_id, "end", iid=path, text=display_name, values=(item_type_cap, size_display), open=False)
                     
                     if 'children' in item_data and item_data['children']:
                         # If it's a folder and has children, recursively insert them
@@ -162,8 +173,7 @@ class TreeManager:
                             insert_items_recursively(node_id, item_data['children'])
                         elif isinstance(item_data['children'], dict) and 'error' in item_data['children']:
                             # Optionally, insert an error node for this folder
-                            self.app.source_tree.insert(node_id, "end", text=f"Error scanning: {item_data['children']['error']}", values=("Error", ""))
-                # Files are intentionally skipped for display in the source_tree
+                            self.app.source_tree.insert(node_id, "end", text=f"❌ Error scanning: {item_data['children']['error']}", values=("Error", ""))
 
         # Start recursive insertion from the root of the treeview (parent_node_id = "")
         self.app.status_manager.add_log_message(f"Initiating recursive insertion into source tree for {len(items) if items else 0} items.", "DEBUG")
@@ -338,6 +348,16 @@ class TreeManager:
             asset = item_data.get('normalized_parts', {}).get('asset', '')
             new_path = item_data.get('new_destination_path', '')
             tags_dict = item_data.get('matched_tags', {})
+            item_type = item_data.get('type', 'file').lower()
+            
+            # Get appropriate icon based on type and content
+            icon = self._get_item_icon(item_data)
+            
+            # Format task with icon if present - add spacing for visibility
+            task_display = f"{self.app.theme_manager.get_icon_text('task')}  {task}" if task else ""
+            
+            # Format asset with icon if present - add spacing for visibility
+            asset_display = f"{self.app.theme_manager.get_icon_text('asset')}  {asset}" if asset else ""
             
             # Format tags nicely - show key-value pairs
             if isinstance(tags_dict, dict) and tags_dict:
@@ -354,18 +374,45 @@ class TreeManager:
             tag_list_for_style = []
             if status == 'error' or error_msg:
                 tag_list_for_style.append('error')
-                tags = f"ERROR: {error_msg[:50]}{'...' if error_msg and len(error_msg) > 50 else ''}"
+                tags = f"❌ ERROR: {error_msg[:50]}{'...' if error_msg and len(error_msg) > 50 else ''}"
             elif status == 'manual':
                 tag_list_for_style.append('manual')
             elif status == 'unmatched':
                 tag_list_for_style.append('unmatched')
             
-            # Insert into tree
+            # Create display filename with icon - add spacing for better visibility
+            display_filename = f"{icon}  {filename}"
+            
+            # Insert into tree with icons
             self.app.preview_tree.insert('', 'end', iid=item_id, text="☐", 
-                                         values=(filename, task, asset, new_path, tags),
+                                         values=(display_filename, task_display, asset_display, new_path, tags),
                                          tags=tuple(tag_list_for_style),
                                          open=False)
             if hasattr(self.app, 'preview_tree_item_data_map'):
                 self.app.preview_tree_item_data_map[item_id] = item_data 
         
-        print(f"[TREE_MANAGER_DEBUG] Preview tree populated with {len(data)} items") 
+        print(f"[TREE_MANAGER_DEBUG] Preview tree populated with {len(data)} items")
+
+    def _get_item_icon(self, item_data: Dict[str, Any]) -> str:
+        """Get appropriate icon for an item based on its type and content."""
+        item_type = item_data.get('type', 'file').lower()
+        filename = item_data.get('filename', '').lower()
+        
+        # Sequence gets special icon
+        if item_type == 'sequence':
+            return self.app.theme_manager.get_icon_text("sequence")
+        
+        # File type detection by extension with fallback text icons
+        if any(ext in filename for ext in ['.exr', '.jpg', '.jpeg', '.png', '.tiff', '.tga', '.dpx']):
+            return self.app.theme_manager.get_icon_text("image")
+        elif any(ext in filename for ext in ['.mov', '.mp4', '.avi', '.mkv', '.prores']):
+            return self.app.theme_manager.get_icon_text("video")
+        elif any(ext in filename for ext in ['.wav', '.mp3', '.aac', '.flac']):
+            return self.app.theme_manager.get_icon_text("audio")
+        elif any(ext in filename for ext in ['.zip', '.rar', '.7z', '.tar']):
+            return self.app.theme_manager.get_icon_text("file")  # Generic file icon for archives
+        elif any(ext in filename for ext in ['.py', '.js', '.cpp', '.h', '.json', '.xml']):
+            return self.app.theme_manager.get_icon_text("file")  # Generic file icon for code
+        else:
+            # Default file icon
+            return self.app.theme_manager.get_icon_text("file") 

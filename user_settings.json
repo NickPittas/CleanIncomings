@@ -1,14 +1,14 @@
 {
   "ui_state": {
-    "window_geometry": "1578x801+259+196",
-    "window_position": "+259+196",
+    "window_geometry": "1578x801+545+464",
+    "window_position": "+545+464",
     "log_panel_collapsed": true,
-    "horizontal_pane_position": 336,
+    "horizontal_pane_position": 373,
     "vertical_pane_positions": [
-      499
+      552
     ],
-    "source_folder": "V:/OLD/04_vfx/FOX/196799130_PREVIZ_v022",
-    "destination_folder": "V:/New folder",
+    "source_folder": "V:/OLD/05_comp/KITC",
+    "destination_folder": "V:/New folder/New folder",
     "selected_profile": "Sphere Project",
     "appearance_mode": "System",
     "color_theme": "blue",

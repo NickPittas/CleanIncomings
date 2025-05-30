@@ -10,7 +10,7 @@ import threading
 import uuid
 import concurrent.futures
 from typing import Callable, Dict, Any, List
-from python.file_operations_utils.file_management import copy_item, move_item, copy_sequence_batch
+from python.file_operations_utils.file_management import copy_item, move_item, copy_sequence_batch, move_sequence_batch
 
 
 class FileOperationsManager:
@@ -78,15 +78,11 @@ class FileOperationsManager:
                             file_extension = os.path.splitext(base_names[0])[1]
                             pattern = f"{common_prefix}*{file_extension}"
                             
-                            # Calculate actual total size from filesystem
-                            total_size_bytes = 0
-                            for file_info in files_list:
-                                file_path = file_info.get('path', '')
-                                if file_path and os.path.exists(file_path):
-                                    try:
-                                        total_size_bytes += os.path.getsize(file_path)
-                                    except (OSError, IOError):
-                                        pass  # Skip files we can't read
+                            # Skip redundant size calculation - not needed for copy/move operations
+                            # Progress will be tracked by file count instead of bytes
+                            total_size_bytes = 0  # Will be calculated during transfer if needed
+                            
+                            print(f"[BATCH_DEBUG] Skipping size calculation - will track progress by file count")
                             
                             sequence_batch = {
                                 'type': 'sequence_batch',
@@ -199,40 +195,34 @@ class FileOperationsManager:
                                                 "INFO"
                                             )
                                         elif status == 'progress':
-                                            # Real-time progress update during batch operation
-                                            percent = data.get('percent', 0)
+                                            # Extract progress values
                                             files_copied = data.get('files_copied', 0)
-                                            file_count = data.get('total_files', data.get('file_count', 0))  # Handle both old and new field names
-                                            speed_mbps = data.get('speed_mbps', 0)
-                                            speed_gbps = data.get('speed_gbps', 0)
+                                            file_count = data.get('total_files', 1)
+                                            percent = data.get('percent', 0)
+                                            speed_mbps = data.get('speed_mbps', 0.0)
                                             eta_str = data.get('eta_str', 'Calculating...')
-                                            message = data.get('message', 'Copying...')
                                             
-                                            print(f"[BATCH_UI_DEBUG] Progress update: {files_copied}/{file_count} ({percent:.1f}%) at {speed_mbps:.1f} MB/s")
+                                            print(f"[BATCH_UI_DEBUG] Progress update: {files_copied}/{file_count} ({percent:.1f}%) at {speed_mbps} MB/s")
                                             
-                                            # Get total size from captured batch_data OR from the data itself
-                                            total_size = captured_batch_data.get('total_size', 0)
-                                            if total_size == 0:
-                                                total_size = data.get('total_size', 0)
-                                            
-                                            print(f"[BATCH_UI_DEBUG] Using total_size: {total_size} for progress calculation")
-                                            
-                                            # Calculate transferred bytes properly
-                                            if total_size > 0:
-                                                estimated_transferred = int((percent / 100) * total_size)
+                                            # Use total_size from the original batch data if available
+                                            if captured_batch_data['total_size'] > 0:
+                                                estimated_transferred = min(files_copied * (captured_batch_data['total_size'] // file_count), captured_batch_data['total_size']) if file_count > 0 else 0
+                                                print(f"[BATCH_UI_DEBUG] Using total_size: {captured_batch_data['total_size']} for progress calculation")
                                             else:
                                                 # Fallback: estimate based on files copied
                                                 estimated_transferred = files_copied * 2000000  # Assume 2MB per file
+                                                print(f"[BATCH_UI_DEBUG] Using total_size: 0 for progress calculation")
                                             
                                             print(f"[BATCH_UI_DEBUG] Updating progress bar - transferred: {estimated_transferred}, speed: {speed_mbps}, eta: {eta_str}")
                                             
-                                            # CRITICAL FIX: Update progress with real-time info
+                                            # CRITICAL FIX: Update progress with real-time info and actual percentage
                                             self.app.file_operations_progress.update_transfer_progress(
                                                 captured_transfer_id, 
                                                 estimated_transferred,
                                                 speed_mbps,
                                                 eta_str,
-                                                'active'
+                                                'active',
+                                                percent  # Pass the actual percentage from callback
                                             )
                                             
                                             # Log periodic progress (less frequent to avoid spam)
@@ -280,14 +270,27 @@ class FileOperationsManager:
                                 print(f"[BATCH_CALLBACK_DEBUG] App has no 'after' method!")
                         return batch_progress_callback
                     
-                    # Execute sequence batch operation
-                    success, message = copy_sequence_batch(
-                        source_dir=batch_data['source_dir'],
-                        destination_dir=batch_data['dest_dir'],
-                        file_pattern=batch_data['pattern'],
-                        status_callback=create_batch_progress_callback(batch_data, transfer_id),
-                        transfer_id=transfer_id
-                    )
+                    # Execute sequence batch operation - use correct function based on operation type
+                    if operation_type == "Copy":
+                        success, message = copy_sequence_batch(
+                            source_dir=batch_data['source_dir'],
+                            destination_dir=batch_data['dest_dir'],
+                            file_pattern=batch_data['pattern'],
+                            status_callback=create_batch_progress_callback(batch_data, transfer_id),
+                            transfer_id=transfer_id,
+                            file_count=batch_data['file_count'],
+                            total_size=batch_data['total_size']
+                        )
+                    else:  # Move operation
+                        success, message = move_sequence_batch(
+                            source_dir=batch_data['source_dir'],
+                            destination_dir=batch_data['dest_dir'],
+                            file_pattern=batch_data['pattern'],
+                            status_callback=create_batch_progress_callback(batch_data, transfer_id),
+                            transfer_id=transfer_id,
+                            file_count=batch_data['file_count'],
+                            total_size=batch_data['total_size']
+                        )
                     
                     if not success:
                         def mark_batch_error():

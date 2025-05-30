@@ -2,19 +2,66 @@
   "Simple Project": [
     {
       "3D/Renders": [
-        "3d", "albedo", "beauty", "bump", "depth", "diffuse", "displacement", "emission", "lighting", "metallic", "normal", "objectid", "occlusion", "position", "refraction", "rgb", "roughness", "specular", "sss", "volume", 
-        "main_arch", "second_arch", "hero", "background", "vehicle", "character", "prop", "env", "fx", "matte", "crowd", "imags",
-        "PREVIZ", "FINAL", "ANIM", "LAYOUT", "BLOCK", "LIGHT", "RENDER","cryptomatte", "puzzle","emissive", "velocity"
+        "main_arch",
+        "second_arch",
+        "hero",
+        "background",
+        "vehicle",
+        "character",
+        "prop",
+        "env",
+        "fx",
+        "matte",
+        "crowd",
+        "imags",
+        "PREVIZ",
+        "ANIM",
+        "LAYOUT",
+        "BLOCK",
+        "LIGHT",
+        "RENDER",
+        "3d",
+        "alb",
+        "albedo",
+        "albedo_map",
+        "arnoldbeauty",
+        "arnoldcryptoasset",
+        "arnoldcryptomaterial",
+        "arnoldcryptoobject",
+        "arnolddiffuse",
+        "arnolddiffusedirect",
+        "arnolddiffuseindirect",
+        "arnoldemission",
+        "arnoldid",
+        "arnoldindirect",
+        "arnoldmotionvector",
+        "arnoldn",
+        "arnoldspecular",
+        "arnoldspeculardirect",
+        "arnoldspecularindirect",
+        "arnoldsss",
+        "arnoldtransmission",
+        "arnoldvolume",
+        "arnoldz",
+        "beauty"
       ]
     },
     {
       "Projects/Nuke": [
-        "COMP", "CLEANUP"
+        "COMP",
+        "comp",
+        "CLEANUP"
       ]
     },
     {
       "Video/Footage": [
-        "MAIN", "footage", "source", "video", "plate", "plates",
+        "MAIN",
+        "footage",
+        "source",
+        "video",
+        "plate",
+        "plt",
+        "plates",
         "DELIVERY"
       ]
     }
@@ -22,19 +69,66 @@
   "Sphere Project": [
     {
       "04_vfx": [
-        "3d", "albedo", "beauty", "bump", "depth", "diffuse", "displacement", "emission", "lighting", "metallic", "normal", "objectid", "occlusion", "position", "refraction", "rgb", "roughness", "specular", "sss", "volume", 
-        "main_arch", "second_arch", "hero", "background", "vehicle", "character", "prop", "env", "fx", "matte", "crowd", "imags",
-        "PREVIZ", "FINAL", "ANIM", "LAYOUT", "BLOCK", "LIGHT", "RENDER","cryptomatte", "puzzle","emissive", "velocity"
+        "3d",
+        "albedo",
+        "beauty",
+        "bump",
+        "depth",
+        "diffuse",
+        "displacement",
+        "emission",
+        "lighting",
+        "metallic",
+        "normal",
+        "objectid",
+        "occlusion",
+        "position",
+        "refraction",
+        "rgb",
+        "roughness",
+        "specular",
+        "sss",
+        "volume",
+        "main_arch",
+        "second_arch",
+        "hero",
+        "background",
+        "vehicle",
+        "character",
+        "prop",
+        "env",
+        "fx",
+        "matte",
+        "crowd",
+        "imags",
+        "PREVIZ",
+        "FINAL",
+        "ANIM",
+        "LAYOUT",
+        "BLOCK",
+        "LIGHT",
+        "RENDER",
+        "cryptomatte",
+        "puzzle",
+        "emissive",
+        "velocity"
       ]
     },
     {
       "05_comp": [
-        "COMP", "CLEANUP"
+        "COMP",
+        "oomp",
+        "CLEANUP"
       ]
     },
     {
       "01_plates": [
-        "MAIN", "footage", "source", "video", "plate", "plates",
+        "footage",
+        "source",
+        "video",
+        "plate",
+        "plates",
+        "plt",
         "DELIVERY"
       ]
     }

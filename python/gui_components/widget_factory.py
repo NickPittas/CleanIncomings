@@ -38,6 +38,9 @@ class WidgetFactory:
         """Create the top control frame with profile selection, folder buttons, and theme controls."""
         top_control_frame = ctk.CTkFrame(self.app, corner_radius=0)
         top_control_frame.grid(row=0, column=0, padx=10, pady=(10,5), sticky="ew")
+        
+        # Store reference for theme application
+        self.app.control_panel_frame = top_control_frame
 
         # Profile Selection
         profile_label = ctk.CTkLabel(top_control_frame, text="Profile:")
@@ -86,11 +89,21 @@ class WidgetFactory:
         action_buttons_frame = ctk.CTkFrame(top_control_frame, fg_color="transparent")
         action_buttons_frame.grid(row=0, column=2, padx=10, pady=0, sticky="e")
 
-        self.app.refresh_btn = ctk.CTkButton(action_buttons_frame, text="Refresh/Scan", command=self.app.scan_manager.refresh_scan_data, corner_radius=self.app.current_corner_radius, width=120)
+        self.app.refresh_btn = ctk.CTkButton(action_buttons_frame, 
+                                            text="Refresh/Scan", 
+                                            image=self.app.theme_manager.get_icon_image('refresh'),
+                                            command=self.app.scan_manager.refresh_scan_data, 
+                                            corner_radius=self.app.current_corner_radius, 
+                                            width=150)
         self.app.refresh_btn.pack(side="left", padx=(0,5))
         self.app.accent_widgets.append(self.app.refresh_btn)
 
-        settings_btn = ctk.CTkButton(action_buttons_frame, text="Settings", command=self._open_settings_window, corner_radius=self.app.current_corner_radius, width=100)
+        settings_btn = ctk.CTkButton(action_buttons_frame, 
+                                    text="Settings", 
+                                    image=self.app.theme_manager.get_icon_image('settings'),
+                                    command=self._open_settings_window, 
+                                    corner_radius=self.app.current_corner_radius, 
+                                    width=130)
         settings_btn.pack(side="left", padx=5)
         self.app.accent_widgets.append(settings_btn)
         
@@ -99,19 +112,26 @@ class WidgetFactory:
         theme_controls_frame.grid(row=0, column=3, padx=(20,10), pady=0, sticky="e")
         top_control_frame.grid_columnconfigure(3, weight=1)  # Make this column take extra space
 
-        appearance_label = ctk.CTkLabel(theme_controls_frame, text="Mode:")
+        appearance_label = ctk.CTkLabel(theme_controls_frame, 
+                                        text="Mode:",
+                                        image=self.app.theme_manager.get_icon_image('info'),
+                                        compound="left")
         appearance_label.pack(side="left", padx=(0,5))
         self.app.appearance_mode_menu = ctk.CTkOptionMenu(theme_controls_frame, values=self.app.theme_manager.appearance_modes,
                                                        command=self.app.theme_manager.change_appearance_mode_event, corner_radius=self.app.current_corner_radius)
         self.app.appearance_mode_menu.pack(side="left", padx=(0,10))
         self.app.accent_widgets.append(self.app.appearance_mode_menu)
 
-        color_theme_label = ctk.CTkLabel(theme_controls_frame, text="Color:")
+        color_theme_label = ctk.CTkLabel(theme_controls_frame, 
+                                        text="Theme:",
+                                        image=self.app.theme_manager.get_icon_image('asset'),
+                                        compound="left")
         color_theme_label.pack(side="left", padx=(0,5))
         self.app.color_theme_menu = ctk.CTkOptionMenu(theme_controls_frame, values=self.app.theme_manager.color_themes,
                                                  command=self.app.theme_manager.change_color_theme_event, corner_radius=self.app.current_corner_radius)
         self.app.color_theme_menu.pack(side="left")
-        self.app.color_theme_menu.set(ctk.ThemeManager.theme["CTkFrame"]["top_fg_color"])  # Set initial value
+        self.app.color_theme_menu.set("Default Blue")  # Set initial value
+        self.app.accent_widgets.append(self.app.color_theme_menu)
 
     def _create_main_resizable_layout(self):
         """Create the main layout with resizable panels using PanedWindows."""
@@ -165,18 +185,26 @@ class WidgetFactory:
         source_tree_outer_frame.grid_rowconfigure(1, weight=1)
         source_tree_outer_frame.grid_columnconfigure(0, weight=1)
         
+        # Store reference for theme application
+        self.app.source_tree_frame = source_tree_outer_frame
+        
         # Header frame for title and Show All button
         source_header_frame = ctk.CTkFrame(source_tree_outer_frame, fg_color="transparent")
         source_header_frame.grid(row=0, column=0, padx=5, pady=5, sticky="ew")
         source_header_frame.grid_columnconfigure(1, weight=1)
         
-        ctk.CTkLabel(source_header_frame, text="Source Folder Structure").grid(row=0, column=0, sticky="w")
+        ctk.CTkLabel(source_header_frame, 
+                    text="Source Folder Structure", 
+                    image=self.app.theme_manager.get_icon_image('folder_closed'),
+                    compound="left",
+                    font=ctk.CTkFont(size=14, weight="bold")).grid(row=0, column=0, sticky="w")
         
         # Show All button moved to source tree section
         self.app.show_all_btn = ctk.CTkButton(
             source_header_frame,
             text="Show All",
-            width=80,
+            image=self.app.theme_manager.get_icon_image('info'),
+            width=90,
             height=28,
             command=self._show_all_sequences,
             font=ctk.CTkFont(size=12)
@@ -184,7 +212,7 @@ class WidgetFactory:
         self.app.show_all_btn.grid(row=0, column=2, padx=(5,0), pady=0, sticky="e")
         
         self.app.source_tree = ttk.Treeview(source_tree_outer_frame, columns=("type", "size"), selectmode="browse")
-        self.app.source_tree.heading("#0", text="Name", anchor="w")
+        self.app.source_tree.heading("#0", text=f"{self.app.theme_manager.get_icon_text('folder_open')}  Name", anchor="w")
         self.app.source_tree.heading("type", text="Type", anchor="w")
         self.app.source_tree.heading("size", text="Size", anchor="w")
         self.app.source_tree.column("#0", stretch=tk.YES, minwidth=150)
@@ -192,7 +220,9 @@ class WidgetFactory:
         self.app.source_tree.column("size", width=80, stretch=tk.NO, anchor="e")
         self.app.source_tree.grid(row=1, column=0, padx=5, pady=5, sticky="nsew")
         
-        # Bind selection event for folder-based filtering
+        # Bind events for folder expansion and selection
+        self.app.source_tree.bind("<<TreeviewOpen>>", self._on_source_tree_open)
+        self.app.source_tree.bind("<<TreeviewClose>>", self._on_source_tree_close)
         self.app.source_tree.bind("<<TreeviewSelect>>", self.app.tree_manager.on_source_tree_selection)
         
         # Add to horizontal pane
@@ -207,40 +237,51 @@ class WidgetFactory:
         preview_outer_frame.grid_rowconfigure(5, weight=0)  # Info display
         preview_outer_frame.grid_columnconfigure(0, weight=1)
 
+        # Store reference for theme application
+        self.app.preview_frame = preview_outer_frame
+
         # Title and controls header
         header_frame = ctk.CTkFrame(preview_outer_frame, fg_color="transparent")
         header_frame.grid(row=0, column=0, columnspan=2, padx=5, pady=5, sticky="ew")
         header_frame.grid_columnconfigure(4, weight=1)  # Middle space for alignment
 
-        ctk.CTkLabel(header_frame, text="Preview & Actions", font=ctk.CTkFont(size=14, weight="bold")).grid(row=0, column=0, padx=(0,15), pady=0, sticky="w")
+        ctk.CTkLabel(header_frame, 
+                    text="Preview & Actions", 
+                    image=self.app.theme_manager.get_icon_image('sequence'),
+                    compound="left",
+                    font=ctk.CTkFont(size=14, weight="bold")).grid(row=0, column=0, padx=(0,15), pady=0, sticky="w")
 
         # Sort controls - better aligned
-        sort_label = ctk.CTkLabel(header_frame, text="Sort:")
+        sort_label = ctk.CTkLabel(header_frame, 
+                                 text="Sort:",
+                                 image=self.app.theme_manager.get_icon_image('refresh'),
+                                 compound="left")
         sort_label.grid(row=0, column=1, padx=(0,5), pady=0, sticky="w")
         
-        self.app.sort_combo = ctk.CTkComboBox(
-            header_frame,
-            values=["Filename", "Task", "Asset", "Destination", "Type"],
-            command=self._on_sort_change,
-            width=100,
-            state="readonly"
-        )
-        self.app.sort_combo.grid(row=0, column=2, padx=(0,5), pady=0, sticky="w")
-        self.app.sort_combo.set("Filename")
-
+        self.app.sort_menu = ctk.CTkOptionMenu(header_frame, values=["Filename", "Task", "Asset", "Destination", "Type"],
+                                              command=self._on_sort_change,
+                                              width=100,
+                                              height=28,
+                                              font=ctk.CTkFont(size=12))
+        self.app.sort_menu.grid(row=0, column=2, padx=(0,5), pady=0)
+        
         # Sort direction button
         self.app.sort_direction_btn = ctk.CTkButton(
             header_frame,
-            text="↑",  # Up arrow for ascending
+            text="",
+            image=self.app.theme_manager.get_icon_image('arrow_up'),
             width=30,
             height=28,
             command=self._toggle_sort_direction,
             font=ctk.CTkFont(size=14)
         )
         self.app.sort_direction_btn.grid(row=0, column=3, padx=(0,15), pady=0)
-
+        
         # Filter controls moved to header row next to sort controls
-        filter_label = ctk.CTkLabel(header_frame, text="Filter:")
+        filter_label = ctk.CTkLabel(header_frame, 
+                                   text="Filter:",
+                                   image=self.app.theme_manager.get_icon_image('info'),
+                                   compound="left")
         filter_label.grid(row=0, column=4, padx=(15,2), pady=0, sticky="e")
 
         self.app.filter_combo = ctk.CTkComboBox(
@@ -256,36 +297,36 @@ class WidgetFactory:
         # Selection controls moved to top right - as indicated by red arrows
         select_all_seq_btn = ctk.CTkButton(
             header_frame,
-            text="Select Sequences",
+            text=f"{self.app.theme_manager.get_icon_text('sequence')}  Select Sequences",
             command=self._select_all_sequences,
-            width=120,
+            width=160,
             height=28
         )
         select_all_seq_btn.grid(row=0, column=6, padx=5, pady=0)
 
         select_all_files_btn = ctk.CTkButton(
             header_frame,
-            text="Select Files",
+            text=f"{self.app.theme_manager.get_icon_text('file')}  Select Files",
             command=self._select_all_files,
-            width=100,
+            width=130,
             height=28
         )
         select_all_files_btn.grid(row=0, column=7, padx=5, pady=0)
 
         clear_selection_btn = ctk.CTkButton(
             header_frame,
-            text="Clear",
+            text=f"{self.app.theme_manager.get_icon_text('error')}  Clear",
             command=self._clear_selection,
-            width=60,
+            width=90,
             height=28
         )
         clear_selection_btn.grid(row=0, column=8, padx=5, pady=0)
 
         self.app.batch_edit_btn = ctk.CTkButton(
             header_frame,
-            text="Batch Edit",
+            text=f"{self.app.theme_manager.get_icon_text('settings')}  Batch Edit",
             command=self._open_batch_edit_dialog,
-            width=80,
+            width=110,
             height=28
         )
         self.app.batch_edit_btn.grid(row=0, column=9, padx=5, pady=0)
@@ -308,12 +349,12 @@ class WidgetFactory:
         self.app.preview_tree_columns = ("filename", "task", "asset", "new_path", "tags")
         self.app.preview_tree = ttk.Treeview(preview_outer_frame, columns=self.app.preview_tree_columns, show="tree headings", selectmode="extended")
         
-        self.app.preview_tree.heading("#0", text="Sel")  # For checkbox text via item's text property
-        self.app.preview_tree.heading("filename", text="File/Sequence Name", command=lambda: self._on_column_click("filename"))
-        self.app.preview_tree.heading("task", text="Task", command=lambda: self._on_column_click("task"))  # Editable
-        self.app.preview_tree.heading("asset", text="Asset", command=lambda: self._on_column_click("asset"))  # Editable
-        self.app.preview_tree.heading("new_path", text="New Destination Path", command=lambda: self._on_column_click("destination"))
-        self.app.preview_tree.heading("tags", text="Matched Tags", command=lambda: self._on_column_click("type"))  # Moved to last
+        self.app.preview_tree.heading("#0", text="☐")  # For checkbox text via item's text property
+        self.app.preview_tree.heading("filename", text="📁 File/Sequence Name", command=lambda: self._on_column_click("filename"))
+        self.app.preview_tree.heading("task", text="⚙️ Task", command=lambda: self._on_column_click("task"))  # Editable
+        self.app.preview_tree.heading("asset", text="🎨 Asset", command=lambda: self._on_column_click("asset"))  # Editable
+        self.app.preview_tree.heading("new_path", text="📂 New Destination Path", command=lambda: self._on_column_click("new_path"))
+        self.app.preview_tree.heading("tags", text="ℹ️ Matched Tags", command=lambda: self._on_column_click("type"))  # Moved to last
 
         # Improved column sizing for better usability
         self.app.preview_tree.column("#0", width=40, stretch=tk.NO, anchor="center", minwidth=30)  # Checkbox column
@@ -349,6 +390,7 @@ class WidgetFactory:
         self.app.copy_selected_btn = ctk.CTkButton(
             action_buttons_bottom_frame, 
             text="Copy Selected", 
+            image=self.app.theme_manager.get_icon_image('success'),
             command=self.app.file_operations_manager.on_copy_selected_click, 
             state="disabled",
             corner_radius=self.app.current_corner_radius
@@ -359,6 +401,7 @@ class WidgetFactory:
         self.app.move_selected_btn = ctk.CTkButton(
             action_buttons_bottom_frame, 
             text="Move Selected", 
+            image=self.app.theme_manager.get_icon_image('warning'),
             command=self.app.file_operations_manager.on_move_selected_click, 
             state="disabled",
             corner_radius=self.app.current_corner_radius
@@ -370,7 +413,10 @@ class WidgetFactory:
         info_display_bottom_frame = ctk.CTkFrame(preview_outer_frame, corner_radius=self.app.current_corner_radius, height=60)
         info_display_bottom_frame.grid(row=5, column=0, columnspan=2, padx=5, pady=5, sticky="ew")
         info_display_bottom_frame.pack_propagate(False)  # Prevent shrinking
-        ctk.CTkLabel(info_display_bottom_frame, text="Details of selected item - Coming Soon!").pack(padx=5, pady=5, anchor="nw")
+        ctk.CTkLabel(info_display_bottom_frame, 
+                    text="Details of selected item - Coming Soon!",
+                    image=self.app.theme_manager.get_icon_image('info'),
+                    compound="left").pack(padx=5, pady=5, anchor="nw")
         
         # Add to horizontal pane
         self.app.main_horizontal_pane.add(preview_outer_frame, weight=3)  # Give more weight to preview area
@@ -392,8 +438,9 @@ class WidgetFactory:
         reverse = not self.app.tree_manager.sort_reverse
         self.app.tree_manager.set_sort_order(self.app.tree_manager.current_sort_column, reverse)
         
-        # Update button text
-        self.app.sort_direction_btn.configure(text="↓" if reverse else "↑")
+        # Update button image
+        arrow_image = self.app.theme_manager.get_icon_image('arrow_down') if reverse else self.app.theme_manager.get_icon_image('arrow_up')
+        self.app.sort_direction_btn.configure(image=arrow_image)
 
     def _on_filter_change(self, value):
         """Handle filter change with improved debugging."""
@@ -747,6 +794,9 @@ class WidgetFactory:
         log_container.grid_rowconfigure(1, weight=1)  # Log content expands
         log_container.grid_columnconfigure(0, weight=1)
 
+        # Store reference for theme application
+        self.app.log_frame = log_container
+
         # Log header with toggle button
         log_header_frame = ctk.CTkFrame(log_container, fg_color="transparent")
         log_header_frame.grid(row=0, column=0, padx=5, pady=(5,0), sticky="ew")
@@ -755,7 +805,8 @@ class WidgetFactory:
         # Toggle button
         self.app.log_toggle_btn = ctk.CTkButton(
             log_header_frame,
-            text="🔽",  # Down arrow when expanded
+            text="",
+            image=self.app.theme_manager.get_icon_image('arrow_down'),
             width=30,
             height=25,
             command=self._toggle_log_panel,
@@ -768,16 +819,18 @@ class WidgetFactory:
         log_title_label = ctk.CTkLabel(
             log_header_frame,
             text="Application Logs",
+            image=self.app.theme_manager.get_icon_image('info'),
+            compound="left",
             font=ctk.CTkFont(size=12, weight="bold"),
             anchor="w"
         )
-        log_title_label.grid(row=0, column=1, pady=0, sticky="w")
+        log_title_label.grid(row=0, column=1, pady=0, sticky="ew")
 
         # Clear log button
         clear_log_btn = ctk.CTkButton(
             log_header_frame,
-            text="Clear",
-            width=60,
+            text=f"{self.app.theme_manager.get_icon_text('error')}  Clear",
+            width=90,
             height=25,
             command=self._clear_log,
             corner_radius=self.app.current_corner_radius,
@@ -804,19 +857,19 @@ class WidgetFactory:
         self.app.log_panel_collapsed = True
         # Start with log panel collapsed
         self.app.log_content_frame.grid_remove()
-        self.app.log_toggle_btn.configure(text="🔼")  # Up arrow for collapsed state
+        self.app.log_toggle_btn.configure(image=self.app.theme_manager.get_icon_image('arrow_up'))
 
     def _toggle_log_panel(self):
         """Toggle the log panel visibility."""
         if self.app.log_panel_collapsed:
             # Expand log panel
             self.app.log_content_frame.grid(row=1, column=0, padx=5, pady=5, sticky="nsew")
-            self.app.log_toggle_btn.configure(text="🔽")  # Down arrow
+            self.app.log_toggle_btn.configure(image=self.app.theme_manager.get_icon_image('arrow_down'))
             self.app.log_panel_collapsed = False
         else:
             # Collapse log panel
             self.app.log_content_frame.grid_remove()
-            self.app.log_toggle_btn.configure(text="🔼")  # Up arrow
+            self.app.log_toggle_btn.configure(image=self.app.theme_manager.get_icon_image('arrow_up'))
             self.app.log_panel_collapsed = True
 
     def _clear_log(self):
@@ -1024,98 +1077,100 @@ class WidgetFactory:
         self.scan_threads_var.trace('w', self._on_scan_threads_change)
         self.copy_threads_var.trace('w', self._on_copy_threads_change)
         
-        # JSON Editor tab
-        json_tab = tabview.add("JSON Editor")
-        json_tab.grid_columnconfigure(0, weight=1)
-        json_tab.grid_rowconfigure(1, weight=1)
+        # Patterns Editor tab
+        patterns_tab = tabview.add("Patterns Editor")
+        patterns_tab.grid_columnconfigure(0, weight=1)
+        patterns_tab.grid_rowconfigure(1, weight=1)
         
-        # JSON Editor header
-        json_header = ctk.CTkFrame(json_tab)
-        json_header.grid(row=0, column=0, sticky="ew", padx=10, pady=10)
-        json_header.grid_columnconfigure(2, weight=1)
+        # Simple button to open patterns editor
+        patterns_header = ctk.CTkFrame(patterns_tab)
+        patterns_header.grid(row=0, column=0, sticky="ew", padx=20, pady=20)
+        patterns_header.grid_columnconfigure(1, weight=1)
         
-        json_title = ctk.CTkLabel(
-            json_header,
-            text="Configuration File Editor",
+        patterns_title = ctk.CTkLabel(
+            patterns_header,
+            text="🎨 Patterns Configuration",
+            font=ctk.CTkFont(size=16, weight="bold")
+        )
+        patterns_title.grid(row=0, column=0, sticky="w")
+        
+        patterns_info = ctk.CTkFrame(patterns_tab)
+        patterns_info.grid(row=1, column=0, sticky="nsew", padx=20, pady=(0, 20))
+        
+        patterns_description = ctk.CTkLabel(
+            patterns_info,
+            text="""Configure pattern recognition rules for:
+            
+• Shot Patterns - Regex patterns for shot identification (e.g., SC\\d{3}, sh\\d{3})
+• Task Patterns - Task categories with their associated keywords/aliases  
+• Resolution Patterns - Resolution identifiers (e.g., 4k, 2k, hd, uhd)
+• Version Patterns - Version number patterns (e.g., v\\d{3}, ver\\d{3})
+• Asset Patterns - Asset type keywords (e.g., hero, vehicle, character, prop)
+• Stage Patterns - Production stage keywords (e.g., PREVIZ, ANIM, LAYOUT, COMP)
+
+Click the button below to open the full patterns editor in a separate window.""",
+            font=ctk.CTkFont(size=12),
+            justify="left"
+        )
+        patterns_description.pack(padx=20, pady=20, anchor="nw")
+        
+        open_patterns_btn = ctk.CTkButton(
+            patterns_info,
+            text="🎨 Open Patterns Editor",
+            command=self._open_patterns_editor,
+            width=200,
+            height=40,
             font=ctk.CTkFont(size=14, weight="bold")
         )
-        json_title.grid(row=0, column=0, columnspan=3, padx=10, pady=5, sticky="w")
+        open_patterns_btn.pack(pady=20)
         
-        json_info = ctk.CTkLabel(
-            json_header,
-            text="Edit patterns.json and profiles.json files. Backup files are created automatically.",
-            font=ctk.CTkFont(size=10),
-            text_color=("gray60", "gray40")
+        # Profiles Editor tab
+        profiles_tab = tabview.add("Profiles Editor")
+        profiles_tab.grid_columnconfigure(0, weight=1)
+        profiles_tab.grid_rowconfigure(1, weight=1)
+        
+        # Simple button to open profiles editor
+        profiles_header = ctk.CTkFrame(profiles_tab)
+        profiles_header.grid(row=0, column=0, sticky="ew", padx=20, pady=20)
+        profiles_header.grid_columnconfigure(1, weight=1)
+        
+        profiles_title = ctk.CTkLabel(
+            profiles_header,
+            text="📁 Profiles Configuration",
+            font=ctk.CTkFont(size=16, weight="bold")
         )
-        json_info.grid(row=1, column=0, columnspan=3, padx=10, pady=(0, 5), sticky="w")
+        profiles_title.grid(row=0, column=0, sticky="w")
         
-        # File selector
-        file_label = ctk.CTkLabel(json_header, text="Select File:")
-        file_label.grid(row=2, column=0, padx=10, pady=5, sticky="w")
+        profiles_info = ctk.CTkFrame(profiles_tab)
+        profiles_info.grid(row=1, column=0, sticky="nsew", padx=20, pady=(0, 20))
         
-        self.json_file_var = tk.StringVar(value="patterns.json")
-        json_file_combo = ctk.CTkComboBox(
-            json_header,
-            values=["patterns.json", "profiles.json"],
-            variable=self.json_file_var,
-            command=self._on_json_file_change,
-            width=120
+        profiles_description = ctk.CTkLabel(
+            profiles_info,
+            text="""Configure project profiles and folder structures:
+            
+• Create multiple profiles for different project types
+• Define folder paths for organized output structure
+• Assign pattern types to specific folders
+• Customize how files are sorted and organized
+
+Each profile contains folder rules that determine where different types
+of files will be placed based on their detected patterns.
+
+Click the button below to open the full profiles editor in a separate window.""",
+            font=ctk.CTkFont(size=12),
+            justify="left"
         )
-        json_file_combo.grid(row=2, column=1, padx=5, pady=5, sticky="w")
+        profiles_description.pack(padx=20, pady=20, anchor="nw")
         
-        # Backup button
-        backup_btn = ctk.CTkButton(
-            json_header,
-            text="Create Backup",
-            command=self._create_json_backup,
-            width=100
+        open_profiles_btn = ctk.CTkButton(
+            profiles_info,
+            text="📁 Open Profiles Editor",
+            command=self._open_profiles_editor,
+            width=200,
+            height=40,
+            font=ctk.CTkFont(size=14, weight="bold")
         )
-        backup_btn.grid(row=2, column=2, padx=5, pady=5, sticky="e")
-        
-        # JSON Editor content
-        json_content = ctk.CTkFrame(json_tab)
-        json_content.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
-        json_content.grid_columnconfigure(0, weight=1)
-        json_content.grid_rowconfigure(0, weight=1)
-        
-        # Text editor with syntax highlighting simulation
-        self.json_editor = ctk.CTkTextbox(
-            json_content,
-            font=ctk.CTkFont(family="Courier", size=11),
-            wrap="none"
-        )
-        self.json_editor.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
-        
-        # JSON Editor buttons
-        json_buttons = ctk.CTkFrame(json_tab)
-        json_buttons.grid(row=2, column=0, sticky="ew", padx=10, pady=(0, 10))
-        
-        validate_btn = ctk.CTkButton(
-            json_buttons,
-            text="Validate JSON",
-            command=self._validate_json,
-            width=100
-        )
-        validate_btn.pack(side="left", padx=10, pady=10)
-        
-        save_json_btn = ctk.CTkButton(
-            json_buttons,
-            text="Save Changes",
-            command=self._save_json_changes,
-            width=100
-        )
-        save_json_btn.pack(side="right", padx=10, pady=10)
-        
-        reload_json_btn = ctk.CTkButton(
-            json_buttons,
-            text="Reload File",
-            command=self._reload_json_file,
-            width=100
-        )
-        reload_json_btn.pack(side="right", padx=5, pady=10)
-        
-        # Load initial JSON content
-        self._load_json_content()
+        open_profiles_btn.pack(pady=20)
         
         # About tab
         about_tab = tabview.add("About")
@@ -1236,17 +1291,31 @@ Built with:
             if source_path and not source_valid:
                 self.app.source_folder_entry.configure(border_color="red")
             else:
-                self.app.source_folder_entry.configure(border_color=None)  # Reset to default
+                # Reset to default by configuring without border_color parameter
+                try:
+                    # Get the default border color from theme
+                    default_border = ("gray60", "gray30")  # CustomTkinter default
+                    self.app.source_folder_entry.configure(border_color=default_border)
+                except:
+                    # If that fails, don't set border_color at all
+                    pass
         
         if hasattr(self.app, 'dest_folder_entry'):
             if dest_path and not dest_valid:
                 self.app.dest_folder_entry.configure(border_color="red")
             else:
-                self.app.dest_folder_entry.configure(border_color=None)  # Reset to default
+                # Reset to default by configuring without border_color parameter
+                try:
+                    # Get the default border color from theme
+                    default_border = ("gray60", "gray30")  # CustomTkinter default
+                    self.app.dest_folder_entry.configure(border_color=default_border)
+                except:
+                    # If that fails, don't set border_color at all
+                    pass
         
         # Update action button states
         if hasattr(self.app, 'tree_manager'):
-            self.app.tree_manager.update_action_button_states() 
+            self.app.tree_manager.update_action_button_states()
 
     def _adjust_thread_count(self, var, delta):
         """Adjust thread count and update UI."""
@@ -1317,163 +1386,156 @@ Built with:
         
         print(f"Copy threads changed to: {new_value} (effective: {min(new_value, 24)} for BALANCED 10GbE)")
 
-    def _on_json_file_change(self, value):
-        """Handle JSON file change."""
-        self._load_json_content()
-        self.app.status_manager.add_log_message(f"Loaded JSON file: {value}", "INFO")
-
-    def _create_json_backup(self):
-        """Create a backup of the selected JSON file."""
-        try:
-            import shutil
-            from datetime import datetime
-            
-            filename = self.json_file_var.get()
-            source_path = os.path.join(self.app._config_dir_path, filename)
-            
-            if not os.path.exists(source_path):
-                self.app.status_manager.add_log_message(f"File not found: {filename}", "ERROR")
-                return
-            
-            # Create backup filename with timestamp
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            backup_filename = f"{filename}.backup_{timestamp}"
-            backup_path = os.path.join(self.app._config_dir_path, backup_filename)
-            
-            # Copy file
-            shutil.copy2(source_path, backup_path)
-            self.app.status_manager.add_log_message(f"Backup created: {backup_filename}", "INFO")
-            
-        except Exception as e:
-            self.app.status_manager.add_log_message(f"Error creating backup: {e}", "ERROR")
-
-    def _validate_json(self):
-        """Validate the current JSON content."""
-        try:
-            import json
-            content = self.json_editor.get("1.0", tk.END).strip()
-            
-            if not content:
-                self.app.status_manager.add_log_message("No content to validate", "WARNING")
-                return
-            
-            # Parse JSON to validate
-            json.loads(content)
-            self.app.status_manager.add_log_message("✅ JSON is valid!", "INFO")
-            
-        except json.JSONDecodeError as e:
-            self.app.status_manager.add_log_message(f"❌ JSON validation error: {e}", "ERROR")
-        except Exception as e:
-            self.app.status_manager.add_log_message(f"❌ Validation error: {e}", "ERROR")
-
-    def _save_json_changes(self):
-        """Save changes to the selected JSON file."""
-        try:
-            import json
-            content = self.json_editor.get("1.0", tk.END).strip()
-            
-            if not content:
-                self.app.status_manager.add_log_message("No content to save", "WARNING")
-                return
-            
-            # Validate JSON first
+    def _on_patterns_saved(self, filename):
+        """Handle patterns configuration saved."""
+        self.app.status_manager.add_log_message(f"Patterns configuration saved: {filename}", "INFO")
+        
+        # Reload patterns in normalizer if available
+        if hasattr(self.app, 'normalizer'):
             try:
-                parsed_json = json.loads(content)
-            except json.JSONDecodeError as e:
-                self.app.status_manager.add_log_message(f"Cannot save: Invalid JSON - {e}", "ERROR")
-                return
-            
-            filename = self.json_file_var.get()
-            file_path = os.path.join(self.app._config_dir_path, filename)
-            
-            # Create backup before saving
-            self._create_json_backup()
-            
-            # Save the file with proper formatting
-            with open(file_path, 'w', encoding='utf-8') as f:
-                json.dump(parsed_json, f, indent=2, ensure_ascii=False)
-            
-            self.app.status_manager.add_log_message(f"✅ Saved changes to {filename}", "INFO")
-            
-            # Reload patterns if needed
-            if filename == "patterns.json" and hasattr(self.app, 'normalizer'):
-                try:
-                    # Reload the normalizer's patterns
-                    self.app.normalizer.mapping_generator._load_patterns()
+                # Reload the normalizer's patterns using the correct method
+                if hasattr(self.app.normalizer.mapping_generator, 'reload_patterns'):
+                    self.app.normalizer.mapping_generator.reload_patterns()
+                    
+                    # Clear pattern cache to ensure fresh pattern matching
+                    try:
+                        from python.mapping_utils.pattern_cache import get_global_cache
+                        cache = get_global_cache()
+                        cache.clear()
+                        self.app.status_manager.add_log_message("🧹 Pattern cache cleared", "INFO")
+                    except Exception as cache_error:
+                        print(f"Warning: Could not clear pattern cache: {cache_error}")
+                    
                     self.app.status_manager.add_log_message("🔄 Patterns reloaded in normalizer", "INFO")
-                except Exception as e:
-                    self.app.status_manager.add_log_message(f"Warning: Could not reload patterns: {e}", "WARNING")
-            
-        except Exception as e:
-            self.app.status_manager.add_log_message(f"❌ Error saving file: {e}", "ERROR")
+                else:
+                    self.app.status_manager.add_log_message("Warning: Could not reload patterns - method not found", "WARNING")
+            except Exception as e:
+                self.app.status_manager.add_log_message(f"Warning: Could not reload patterns: {e}", "WARNING")
 
-    def _reload_json_file(self):
-        """Reload the selected JSON file."""
-        self._load_json_content()
-        filename = self.json_file_var.get()
-        self.app.status_manager.add_log_message(f"🔄 Reloaded {filename}", "INFO")
+    def _on_profiles_saved(self, filename):
+        """Handle profiles configuration saved."""
+        self.app.status_manager.add_log_message(f"Profiles configuration saved: {filename}", "INFO")
+        
+        # Reload profile in normalizer if available
+        if hasattr(self.app, 'normalizer'):
+            try:
+                # Reload profiles
+                self.app.normalizer.load_profiles()
+                self.app.status_manager.add_log_message("🔄 Profiles reloaded in normalizer", "INFO")
+                
+                # Update profile combobox if available
+                if hasattr(self.app, 'profile_combobox'):
+                    old_selection = self.app.selected_profile_name.get()
+                    profile_names = list(self.app.normalizer.all_profiles_data.keys())
+                    self.app.profile_combobox.configure(values=profile_names)
+                    
+                    # Restore selection if it still exists
+                    if old_selection in profile_names:
+                        self.app.profile_combobox.set(old_selection)
+                    elif profile_names:
+                        self.app.profile_combobox.set(profile_names[0])
+                        self.app.selected_profile_name.set(profile_names[0])
+                    
+                    self.app.status_manager.add_log_message("📋 Profile combobox updated", "INFO")
+                
+            except Exception as e:
+                self.app.status_manager.add_log_message(f"Warning: Could not reload profiles: {e}", "WARNING")
 
-    def _load_json_content(self):
-        """Load initial JSON content."""
+    def _on_source_tree_open(self, event):
+        """Handle folder expansion in source tree - update icon to open folder."""
+        selection = self.app.source_tree.selection()
+        if selection:
+            item_id = selection[0]
+            # Get current text
+            current_text = self.app.source_tree.item(item_id, "text")
+            # Replace closed folder icon with open folder icon
+            closed_icon = self.app.theme_manager.get_icon_text("folder_closed")
+            open_icon = self.app.theme_manager.get_icon_text("folder_open")
+            if closed_icon in current_text:
+                new_text = current_text.replace(closed_icon, open_icon)
+                self.app.source_tree.item(item_id, text=new_text)
+
+    def _on_source_tree_close(self, event):
+        """Handle folder collapse in source tree - update icon to closed folder."""
+        selection = self.app.source_tree.selection()
+        if selection:
+            item_id = selection[0]
+            # Get current text
+            current_text = self.app.source_tree.item(item_id, "text")
+            # Replace open folder icon with closed folder icon
+            closed_icon = self.app.theme_manager.get_icon_text("folder_closed")
+            open_icon = self.app.theme_manager.get_icon_text("folder_open")
+            if open_icon in current_text:
+                new_text = current_text.replace(open_icon, closed_icon)
+                self.app.source_tree.item(item_id, text=new_text)
+
+    def apply_theme_to_panels(self):
+        """Apply theme colors with panel variations."""
+        if hasattr(self.app, 'theme_manager'):
+            self.app.theme_manager.apply_panel_colors()
+
+    def _open_patterns_editor(self):
+        """Open the patterns editor in a separate window"""
         try:
-            import json
-            filename = self.json_file_var.get()
-            file_path = os.path.join(self.app._config_dir_path, filename)
+            # Close settings window first
+            if hasattr(self.app, 'settings_window') and self.app.settings_window.winfo_exists():
+                self.app.settings_window.destroy()
             
-            if not os.path.exists(file_path):
-                self.json_editor.delete("1.0", tk.END)
-                self.json_editor.insert("1.0", f"# File not found: {filename}\n# Please create the file first.")
-                self.app.status_manager.add_log_message(f"File not found: {filename}", "WARNING")
-                return
+            # Import and create patterns editor window
+            from .json_editors import PatternsEditorWindow
             
-            with open(file_path, 'r', encoding='utf-8') as f:
-                json_data = json.load(f)
+            # Check if editor is already open
+            if hasattr(self.app, 'patterns_editor_window') and self.app.patterns_editor_window:
+                try:
+                    self.app.patterns_editor_window.show()
+                    return
+                except:
+                    # Window was destroyed, create new one
+                    pass
             
-            # Format JSON nicely
-            formatted_json = json.dumps(json_data, indent=2, ensure_ascii=False)
+            # Create new patterns editor window
+            self.app.patterns_editor_window = PatternsEditorWindow(
+                config_dir=self.app._config_dir_path,
+                on_save_callback=self._on_patterns_saved
+            )
             
-            # Load into editor
-            self.json_editor.delete("1.0", tk.END)
-            self.json_editor.insert("1.0", formatted_json)
-            
-            # Add helpful comments at the top
-            if filename == "patterns.json":
-                header = """// Patterns Configuration File
-// This file defines the patterns used for extracting information from filenames
-// 
-// taskPatterns: Maps task names to their possible aliases
-// shotPatterns: Regex patterns for shot identification
-// resolutionPatterns: Patterns for resolution detection
-// versionPatterns: Patterns for version numbers
-// assetPatterns: Asset name patterns
-// stagePatterns: Production stage patterns
-//
-// WARNING: Invalid JSON will cause the application to fail!
-// Use the 'Validate JSON' button before saving.
-
-"""
-            elif filename == "profiles.json":
-                header = """// Profiles Configuration File
-// This file defines project profiles and their folder structures
-//
-// Each profile maps folder paths to keyword lists
-// Keywords are matched against extracted task/asset names
-// The first matching rule determines the destination folder
-//
-// WARNING: Invalid JSON will cause the application to fail!
-// Use the 'Validate JSON' button before saving.
-
-"""
-            else:
-                header = ""
-            
-            # Insert header at the beginning
-            if header:
-                self.json_editor.insert("1.0", header)
-            
-            self.app.status_manager.add_log_message(f"📄 Loaded {filename} ({len(formatted_json)} characters)", "INFO")
+            self.app.status_manager.add_log_message("🎨 Patterns editor opened", "INFO")
             
         except Exception as e:
-            self.json_editor.delete("1.0", tk.END)
-            self.json_editor.insert("1.0", f"Error loading {filename}: {e}")
-            self.app.status_manager.add_log_message(f"❌ Error loading {filename}: {e}", "ERROR") 
+            self.app.status_manager.add_log_message(f"Error opening patterns editor: {e}", "ERROR")
+            print(f"Error opening patterns editor: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _open_profiles_editor(self):
+        """Open the profiles editor in a separate window"""
+        try:
+            # Close settings window first
+            if hasattr(self.app, 'settings_window') and self.app.settings_window.winfo_exists():
+                self.app.settings_window.destroy()
+            
+            # Import and create profiles editor window
+            from .json_editors import ProfilesEditorWindow
+            
+            # Check if editor is already open
+            if hasattr(self.app, 'profiles_editor_window') and self.app.profiles_editor_window:
+                try:
+                    self.app.profiles_editor_window.show()
+                    return
+                except:
+                    # Window was destroyed, create new one
+                    pass
+            
+            # Create new profiles editor window
+            self.app.profiles_editor_window = ProfilesEditorWindow(
+                config_dir=self.app._config_dir_path,
+                on_save_callback=self._on_profiles_saved
+            )
+            
+            self.app.status_manager.add_log_message("📁 Profiles editor opened", "INFO")
+            
+        except Exception as e:
+            self.app.status_manager.add_log_message(f"Error opening profiles editor: {e}", "ERROR")
+            print(f"Error opening profiles editor: {e}")
+            import traceback
+            traceback.print_exc() 

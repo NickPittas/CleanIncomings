@@ -29,13 +29,16 @@ class ProgressPanel(ctk.CTkToplevel):
         super().__init__(parent)
         self.parent = parent
         
-        # Window configuration
+        # Window configuration - made larger and will be centered
         self.title("Scanning Progress")
-        self.geometry("500x350")
+        self.geometry("700x500")  # Increased from 500x350
         self.resizable(True, False)
         
         # Keep window on top but not modal
         self.attributes("-topmost", True)
+        
+        # Center the window on the parent app
+        self._center_on_parent()
         
         # Rate limiting for progress updates
         self.last_update_time = 0
@@ -111,6 +114,24 @@ class ProgressPanel(ctk.CTkToplevel):
         # Bind close event
         self.protocol("WM_DELETE_WINDOW", self.hide_window)
 
+    def _center_on_parent(self):
+        """Center the window on the parent application."""
+        if self.parent:
+            # Get parent window geometry
+            parent_x = self.parent.winfo_x()
+            parent_y = self.parent.winfo_y()
+            parent_width = self.parent.winfo_width()
+            parent_height = self.parent.winfo_height()
+            
+            # Calculate center position
+            window_width = 700
+            window_height = 500
+            x = parent_x + (parent_width // 2) - (window_width // 2)
+            y = parent_y + (parent_height // 2) - (window_height // 2)
+            
+            # Set position
+            self.geometry(f"{window_width}x{window_height}+{x}+{y}")
+
     def hide_window(self):
         """Hide the progress window."""
         self.withdraw()
@@ -120,6 +141,8 @@ class ProgressPanel(ctk.CTkToplevel):
         self.deiconify()
         self.lift()
         self.focus()
+        # Re-center when showing
+        self._center_on_parent()
 
     def _can_update(self) -> bool:
         """Check if we can update based on rate limiting and error count."""
@@ -177,7 +200,7 @@ class ProgressPanel(ctk.CTkToplevel):
         title_label = ctk.CTkLabel(
             header_frame,
             text="📊 Scanning Progress",
-            font=ctk.CTkFont(size=28, weight="bold"),
+            font=ctk.CTkFont(size=21, weight="bold"),
             anchor="w"
         )
         title_label.grid(row=0, column=0, sticky="w")
@@ -222,7 +245,7 @@ class ProgressPanel(ctk.CTkToplevel):
         icon_label = ctk.CTkLabel(
             stage_frame,
             text=stage['icon_pending'],
-            font=ctk.CTkFont(size=28),
+            font=ctk.CTkFont(size=21),
             width=50,
             text_color=("gray60", "gray40")
         )
@@ -232,7 +255,7 @@ class ProgressPanel(ctk.CTkToplevel):
         title_label = ctk.CTkLabel(
             stage_frame,
             text=stage['title'],
-            font=ctk.CTkFont(size=22, weight="normal"),
+            font=ctk.CTkFont(size=16, weight="normal"),
             anchor="w",
             text_color=("gray70", "gray30")
         )
@@ -259,7 +282,7 @@ class ProgressPanel(ctk.CTkToplevel):
             details_label = ctk.CTkLabel(
                 stage_frame,
                 text="",
-                font=ctk.CTkFont(size=18),
+                font=ctk.CTkFont(size=14),
                 anchor="e",
                 text_color=("gray50", "gray60")
             )
@@ -277,7 +300,7 @@ class ProgressPanel(ctk.CTkToplevel):
             details_label = ctk.CTkLabel(
                 stage_frame,
                 text="",
-                font=ctk.CTkFont(size=18),
+                font=ctk.CTkFont(size=14),
                 anchor="e",
                 text_color=("gray50", "gray60")
             )

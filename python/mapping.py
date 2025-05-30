@@ -27,6 +27,7 @@ class MappingGenerator:
         if config_path is None:
             script_dir = Path(__file__).parent.parent
             config_path = script_dir / "src" / "config" / "patterns.json"
+        self.config_path = config_path  # Store config path for reloading
         self.config = load_config(config_path)
         self.shot_patterns = [
             pattern
@@ -40,6 +41,23 @@ class MappingGenerator:
         ]
         self.max_depth = 10
         self.current_frame_numbers = []  # Initialize frame numbers storage
+
+    def reload_patterns(self):
+        """Reload patterns from the config file."""
+        print(f"Reloading patterns from: {self.config_path}")
+        self.config = load_config(self.config_path)
+        self.shot_patterns = [
+            pattern
+            for pattern in self.config.get("shotPatterns", [])
+        ]
+        self.task_patterns = self.config.get("taskPatterns", {})
+        self.resolution_patterns = self.config.get("resolutionPatterns", [])
+        self.version_patterns = [
+            pattern
+            for pattern in self.config.get("versionPatterns", [])
+        ]
+        print(f"Patterns reloaded: {len(self.shot_patterns)} shot patterns, {len(self.task_patterns)} task patterns, {len(self.version_patterns)} version patterns")
+        return True
 
     def _extract_shot_simple(self, filename: str, path: str) -> str:
         # IMPORTANT: Only search filename, never path (per IMPORTANT.md)

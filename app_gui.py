@@ -642,8 +642,8 @@ class CleanIncomingsApp(ctk.CTk):
             self.source_tree.insert("", "end", text="No items found or directory is empty.", values=("", ""))
             return
 
-        # Sort items: folders first, then files, then by name
-        items.sort(key=lambda x: (x['type'] != 'folder', x['name'].lower()))
+        # Sort items: folders first, then files, then by name. Use .get() for safety.
+        items.sort(key=lambda x: (x.get('type', 'file') != 'folder', x.get('name', 'Unnamed Item').lower()))
 
         for item in items:
             name = item['name']

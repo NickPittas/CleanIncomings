@@ -1,5 +1,6 @@
 import json
 import os
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -97,7 +98,7 @@ class GuiNormalizerAdapter:
                 elif scan_error:
                     raise RuntimeError(f"Scanning thread failed: {scan_error}") from scan_error
                 else: # Fallback if thread done but status not updated to completed/failed
-                    print(f"[DEBUG][ADAPTER] Raising 'status unclear'. final_progress_check: {final_progress_check}, scan_error: {scan_error}", flush=True)
+                    # Consider logging this specific scenario if it's possible and unexpected
                     raise RuntimeError("Scan thread finished but final status is unclear and no explicit error caught.")
 
             time.sleep(poll_interval)
@@ -115,9 +116,23 @@ class GuiNormalizerAdapter:
              raise RuntimeError(f"Scan did not complete successfully. Final status: {scan_progress.get('status', 'unknown')}")
 
         scan_result = scan_progress.get("result", {})
-        tree = scan_result.get("tree")
-        if not tree:
-            raise ValueError("Scan completed but no tree structure found in results.")
+        original_scan_tree = scan_result.get("tree")
+        if not original_scan_tree: # Handles cases where tree is None or an empty dict from scan_result.get('tree')
+            self.logger.warning("Scan completed, but the final tree structure is missing or malformed (e.g., None or empty dict from scan result).")
+            raise ValueError("Scan completed but no tree structure found in results (missing/malformed).")
+        else:
+            # Tree exists, now check if it's an empty root and if that's allowed.
+            # An empty root is a dict named 'root' with no children (children key missing, None, or empty list).
+            is_empty_root = (
+                isinstance(original_scan_tree, dict) and
+                original_scan_tree.get('name') == 'root' and
+                not original_scan_tree.get('children')  # True if 'children' is missing, None, or an empty list
+            )
+
+            if is_empty_root and not self.scanner.allows_empty_root_scan_result:
+                self.logger.warning("Scan resulted in an empty root, and scanner configuration does not allow this. Treating as no valid tree structure.")
+                raise ValueError("Scan completed but no tree structure found in results (empty root not allowed).")
+            # If tree is not an empty root, or if it is an empty root and it's allowed, we proceed.
 
         # Get profile data
         profile_config_entry = self.all_profiles_data.get(profile_name)
@@ -179,72 +194,116 @@ class GuiNormalizerAdapter:
             # "description": profile_config_entry.get("description") if isinstance(profile_config_entry, dict) else "Profile loaded by adapter"
         }
 
+        if status_callback:
+            status_callback({'type': 'mapping_generation', 'data': {'status': 'starting', 'message': 'Starting mapping generation...'}})
+
+        # Debug prints for inputs to mapping_generator
+        print(f"[ADAPTER_DEBUG] Tree (type: {type(original_scan_tree)}): {list(original_scan_tree.keys()) if isinstance(original_scan_tree, dict) else 'Not a dict or None'}", file=sys.stderr)
+        if isinstance(original_scan_tree, dict) and original_scan_tree.get('children') is not None:
+            print(f"[ADAPTER_DEBUG] Tree children count: {len(original_scan_tree['children'])}", file=sys.stderr)
+        else:
+            print(f"[ADAPTER_DEBUG] Tree has no children or is not structured as expected.", file=sys.stderr)
+        print(f"[ADAPTER_DEBUG] Profile for generator: {profile_object_for_generator}", file=sys.stderr)
+
         # Generate mapping proposals
         proposals = self.mapping_generator.generate_mappings(
-            tree=tree,
+            tree=original_scan_tree,
             profile=profile_object_for_generator, # Pass the full profile dictionary
             root_output_dir=destination_root,
-            batch_id=batch_id # Pass batch_id for potential internal use by mapping_generator
+            batch_id=batch_id, # Pass batch_id for potential internal use by mapping_generator
+            status_callback=status_callback # Propagate status_callback
         )
+        # Debug print for proposals from mapping_generator
+        if proposals and len(proposals) > 0:
+            first_raw_proposal = proposals[0]
+            raw_tags = first_raw_proposal.get('tags', 'N/A_TAGS_FIELD_MISSING_OR_NONE')
+            raw_original_item = first_raw_proposal.get('original_item', {})
+            raw_original_item_name = raw_original_item.get('name', 'N/A_ORIGINAL_NAME')
+            raw_status = first_raw_proposal.get('status', 'N/A_STATUS')
+            raw_target_path = first_raw_proposal.get('targetPath', 'N/A_TARGETPATH')
+            print(f"[ADAPTER_DEBUG] First RAW proposal: Name='{raw_original_item_name}', Status='{raw_status}', TargetPath='{raw_target_path}', Tags={raw_tags}", file=sys.stderr)
+        elif proposals is not None: # Empty list
+            print(f"[ADAPTER_DEBUG] Proposals from mapping_generator: Empty list (len: 0)", file=sys.stderr)
+        else: # None
+            print(f"[ADAPTER_DEBUG] Proposals from mapping_generator: None", file=sys.stderr)
+
+        # First (redundant) proposal transformation loop removed.
+
+        if status_callback:
+            status_callback({'type': 'mapping_generation', 'data': {'status': 'completed', 'message': 'Mapping generation complete. Transforming results...'}})
+
+        if status_callback:
+            status_callback({'type': 'transformation', 'data': {'status': 'starting', 'message': 'Transforming proposals...'}})
 
         # Transform proposals for GUI
         transformed_proposals = []
-        for p_idx, p_item in enumerate(proposals):
-            # Determine original path and filename
-            original_path = p_item.get("source_path", p_item.get("original_path"))
-            filename = p_item.get("file_name", p_item.get("name"))
-            if not original_path and filename:
-                 # If source_path is missing but we have a list of files (for sequences)
-                if p_item.get("type") == "sequence" and isinstance(p_item.get("files"), list) and p_item["files"]:
-                    original_path = p_item["files"][0] # Take path of first file in sequence
-                    # filename might be base_name + frame_range + suffix for sequences
-                    if p_item.get("base_name") and p_item.get("frame_range_str") and p_item.get("suffix"):
-                        filename = f"{p_item['base_name']}{p_item['frame_range_str']}{p_item['suffix']}"
-                    elif p_item.get("base_name") and p_item.get("suffix") : # single frame sequence
-                         filename = f"{p_item['base_name']}{p_item['suffix']}"
+        if proposals: 
+            for p_item in proposals:
+                original_item = p_item.get('original_item', {})
+                source_path_str = str(original_item.get('path', 'N/A'))
 
-            if not original_path:
-                original_path = f"unknown_path_for_item_{p_idx}"
-            if not filename:
-                filename = Path(original_path).name if original_path != f"unknown_path_for_item_{p_idx}" else f"unknown_filename_{p_idx}"
+                # ---- CASCADE DEBUG PRINT START ----
+                # Check if the original item type is 'sequence' (lowercase, as it's before capitalization for GUI)
+                # if original_item.get('type') == 'sequence':
+                #     print(f"[ADAPTER_DEBUG] RAW p_item (type: sequence): Name='{original_item.get('name')}', p_item.sequence_info='{p_item.get('sequence_info')}', p_item.keys='{list(p_item.keys())}'", file=sys.stderr)
+                # ---- CASCADE DEBUG PRINT END ----
+                
+                tags_data = p_item.get('tags', {})
+                if not isinstance(tags_data, dict):
+                    tags_data = {} 
 
-            # Extract normalized parts - keys might vary, adjust as per actual proposal structure
-            normalized_parts = {
-                "shot": p_item.get("shot_name", p_item.get("shot")),
-                "task": p_item.get("task_name", p_item.get("task")),
-                "version": p_item.get("version_name", p_item.get("version")),
-                "asset": p_item.get("asset_name", p_item.get("asset")),
-                "stage": p_item.get("stage_name", p_item.get("stage")),
-                "resolution": p_item.get("resolution_name", p_item.get("resolution")),
-                "description": p_item.get("description")
-            }
-            
-            # Construct matched_tags
-            matched_tags = []
-            if p_item.get("status"):
-                matched_tags.append(p_item.get("status")) # e.g., "auto", "manual"
-            if p_item.get("type"):
-                matched_tags.append(p_item.get("type")) # e.g., "file", "sequence"
-            if p_item.get("matched_rule_name"):
-                 matched_tags.append(f"rule:{p_item.get('matched_rule_name')}")
-            if p_item.get("error"): # If there was an error processing this item
-                matched_tags.append("error")
+                matched_tags = {k: v for k, v in tags_data.items() if v is not None and v != ''}
 
-            transformed_item = {
-                "id": p_item.get("id", str(uuid.uuid4())), # Ensure each item has a unique ID
-                "original_path": str(original_path),
-                "filename": filename,
-                "size": p_item.get("size"),
-                "type": p_item.get("type", "unknown"),
-                "normalized_parts": {k: v for k, v in normalized_parts.items() if v is not None},
-                "new_destination_path": p_item.get("target_path"),
-                "matched_tags": matched_tags,
-                "status": p_item.get("status", "unknown"), # 'auto', 'manual', 'error', 'unmatched'
-                "error_message": p_item.get("error")
-            }
-            transformed_proposals.append(transformed_item)
+                # This 'gui_matched_tags' will be used for the 'Tags' column in GUI and contains everything from p_item's 'tags'
+                gui_matched_tags = {k: v for k, v in tags_data.items() if v is not None and v != ''}
+
+                # This 'normalized_parts_dict' is specifically for structured columns like Task, Asset
+                # It sources its values from tags_data (which is p_item.get('tags', {}))
+                normalized_parts_dict = {
+                    'shot': tags_data.get('shot'),
+                    'task': tags_data.get('task'),
+                    'asset': tags_data.get('asset_name') or tags_data.get('asset') or tags_data.get('asset_type'), # Check for asset_name, asset, or asset_type
+                    'version': tags_data.get('version'),
+                    'resolution': tags_data.get('resolution'),
+                    'stage': tags_data.get('stage')
+                }
+                # Filter out None values from normalized_parts_dict
+                normalized_parts_dict = {k: v for k, v in normalized_parts_dict.items() if v is not None}
+
+                transformed_item = {
+                    'id': p_item.get('id', str(uuid.uuid4())),
+                    'source_path': source_path_str,
+                    'filename': original_item.get('name', 'N/A'),
+                    'new_destination_path': p_item.get('targetPath', ''),
+                    'new_name': Path(p_item.get('targetPath', '')).name if p_item.get('targetPath') else original_item.get('name', 'N/A'),
+                    'type': original_item.get('type', 'file').capitalize(),
+                    'size': original_item.get('size', ''),
+                    'sequence_info': p_item.get('sequence_info'),
+                    'matched_rules': p_item.get('matched_rules', []),
+                    'matched_tags': gui_matched_tags, # Use the filtered tags_data for the GUI's 'Tags' column
+                    'normalized_parts': normalized_parts_dict, # GUI expects this structure for task, asset etc.
+                    'status': p_item.get('status', 'unknown'),
+                    'error_message': p_item.get('error_message') or p_item.get('error') # Check both possible error keys
+                }
+                if not transformed_proposals: # This will be true only for the first item
+                    print(f"[ADAPTER_DEBUG] First TRANSFORMED item (inside loop):", file=sys.stderr)
+                    print(f"  Original Name: {original_item.get('name', 'N/A')}", file=sys.stderr)
+                    print(f"  Normalized Parts: {transformed_item.get('normalized_parts')}", file=sys.stderr)
+                    print(f"  Matched Tags: {transformed_item.get('matched_tags')}", file=sys.stderr)
+                transformed_proposals.append(transformed_item)
+        else: 
+             if status_callback:
+                status_callback({'type': 'mapping_generation', 'data': {'status': 'warning', 'message': 'No proposals generated.'}})
         
-        return transformed_proposals
+        if status_callback:
+            status_callback({'type': 'transformation', 'data': {'status': 'completed', 'message': 'Proposals transformed.'}})
+
+        # Debug print for final transformed_proposals
+        # print(f"[ADAPTER_DEBUG] Transformed proposals (len: {len(transformed_proposals)}): {transformed_proposals[:1] if transformed_proposals else 'Empty'}", file=sys.stderr)
+        return {
+            "original_scan_tree": original_scan_tree,
+            "proposals": transformed_proposals
+        }
 
 # Example Usage (for testing purposes, typically not run directly)
 if __name__ == '__main__':

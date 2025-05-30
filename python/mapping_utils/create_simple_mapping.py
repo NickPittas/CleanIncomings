@@ -1,77 +1,146 @@
+"""
+Optimized Create Simple Mapping
+
+Creates mapping proposals for individual files using cached pattern extraction
+for improved performance.
+"""
+
 import os
+import sys
 import uuid
-from typing import Dict, Any # For type hinting
-from .generate_simple_target_path import generate_simple_target_path
+from typing import Dict, Any, List
+from .pattern_cache import extract_all_patterns_cached
+
 
 def create_simple_mapping(
     node: Dict[str, Any], 
-    profile_rules: list, # This is the list of rule objects from the profile
-    root_output_dir: str, # The user-selected root output directory
+    profile_rules: List[Dict[str, List[str]]],
+    root_output_dir: str,
     extract_shot_simple=None,
     extract_task_simple=None,
     extract_version_simple=None,
     extract_resolution_simple=None,
     extract_asset_simple=None,
     extract_stage_simple=None,
-    p_shot: list = None,
-    p_task: dict = None,
-    p_version: list = None,
-    p_resolution: list = None,
-    p_asset: list = None,
-    p_stage: list = None
-) -> Dict[str, Any]:
-    filename = node.get("name", "")
-    source_path = node.get("path", "")
+    p_shot: List[str] = None,
+    p_task: Dict[str, List[str]] = None,
+    p_version: List[str] = None,
+    p_resolution: List[str] = None,
+    p_asset: List[str] = None,
+    p_stage: List[str] = None
+):
+    """
+    Creates a mapping proposal for an individual file using optimized pattern caching.
+    
+    Key optimization: All pattern extraction is done in a single cached call
+    instead of multiple individual extract_*_simple calls.
+    """
+    from .generate_simple_target_path import generate_simple_target_path
 
-    # Perform extraction using passed-in functions and patterns
-    # IMPORTANT: Only search filename, never path (source_path is kept for compatibility if an extractor needs it, but it should be empty string for now)
-    shot = extract_shot_simple(filename, "", p_shot) if extract_shot_simple and p_shot else node.get("shot")
-    task = extract_task_simple(filename, "", p_task) if extract_task_simple and p_task else node.get("task")
-    version = extract_version_simple(filename, p_version) if extract_version_simple and p_version else node.get("version")
-    resolution = extract_resolution_simple(filename, "", p_resolution) if extract_resolution_simple and p_resolution else node.get("resolution")
-    asset = extract_asset_simple(filename, p_asset) if extract_asset_simple and p_asset else node.get("asset")
-    stage = extract_stage_simple(filename, p_stage) if extract_stage_simple and p_stage else node.get("stage")
+    try:
+        filename = node.get("name", "")
+        if not filename:
+            return {
+                "id": str(uuid.uuid4()),
+                "status": "error",
+                "error_message": "Missing filename in node"
+            }
 
-    # Call the updated generate_simple_target_path
-    path_generation_result = generate_simple_target_path(
-        root_output_dir=root_output_dir,
-        profile_rules=profile_rules,
-        filename=filename,
-        parsed_shot=shot,
-        parsed_task=task,
-        parsed_asset=asset,
-        parsed_stage=stage,
-        parsed_version=version,
-        parsed_resolution=resolution
-    )
+        print(f"[OPTIMIZED] Processing individual file: '{filename}'", file=sys.stderr)
 
-    target_path = path_generation_result["target_path"] # This can be None if ambiguous
-    used_default_footage_rule = path_generation_result["used_default_footage_rule"]
-    ambiguous_match = path_generation_result["ambiguous_match"]
-    ambiguous_options = path_generation_result["ambiguous_options"]
+        # OPTIMIZATION: Extract all patterns at once using cached extraction
+        # This single call replaces multiple individual extract_*_simple calls
+        if (p_shot is not None and p_task is not None and p_version is not None and 
+            p_resolution is not None and p_asset is not None and p_stage is not None):
+            
+            pattern_results = extract_all_patterns_cached(
+                filename,
+                p_shot,
+                p_task,
+                p_version,
+                p_resolution,
+                p_asset,
+                p_stage
+            )
+            
+            shot = pattern_results['shot']
+            task = pattern_results['task']
+            version = pattern_results['version']
+            resolution = pattern_results['resolution']
+            asset = pattern_results['asset']
+            stage = pattern_results['stage']
+            
+            print(f"[OPTIMIZED] Cached extraction results for '{filename}': shot={shot}, task={task}, version={version}, resolution={resolution}, asset={asset}, stage={stage}", file=sys.stderr)
+        else:
+            # Fallback to individual extraction functions if patterns not provided
+            print(f"[FALLBACK] Using individual extraction functions for '{filename}'", file=sys.stderr)
+            shot = extract_shot_simple(filename, "", p_shot or []) if extract_shot_simple else None
+            task = extract_task_simple(filename, "", p_task or {}) if extract_task_simple else None
+            version = extract_version_simple(filename, p_version or []) if extract_version_simple else None
+            resolution = extract_resolution_simple(filename, "", p_resolution or []) if extract_resolution_simple else None
+            asset = extract_asset_simple(filename, p_asset or []) if extract_asset_simple else None
+            stage = extract_stage_simple(filename, p_stage or []) if extract_stage_simple else None
 
-    status = "auto" if shot and task and version and not used_default_footage_rule and not ambiguous_match else "manual"
-    validated_node = {
-        "name": node.get("name", "unknown_file"),
-        "path": node.get("path", ""),
-        "type": node.get("type", "file"),
-        "size": node.get("size", 0),
-        "extension": node.get("extension", ""),
-    }
-    return {
-        "id": str(uuid.uuid4()),
-        "name": filename,
-        "sourcePath": source_path,
-        "targetPath": target_path,
-        "status": status,
-        "shot": shot,
-        "asset": asset,
-        "stage": stage,
-        "task": task,
-        "version": version,
-        "resolution": resolution,
-        "node": validated_node,
-        "used_default_footage_rule": used_default_footage_rule,
-        "ambiguous_match": ambiguous_match,
-        "ambiguous_options": ambiguous_options
-    }
+        # Generate the target path using the extracted values
+        target_path_result = generate_simple_target_path(
+            root_output_dir=root_output_dir,
+            profile_rules=profile_rules,
+            filename=filename,
+            parsed_shot=shot,
+            parsed_task=task,
+            parsed_asset=asset,
+            parsed_stage=stage,
+            parsed_version=version,
+            parsed_resolution=resolution
+        )
+
+        # Extract the actual path from the result
+        target_path = target_path_result.get("target_path")
+        if not target_path:
+            target_path = os.path.join(root_output_dir, "unmatched", filename)
+
+        # Create the file proposal
+        file_proposal = {
+            "id": str(uuid.uuid4()),
+            "original_item": {
+                "name": filename,
+                "path": node.get("path", ""),
+                "type": "file",
+                "size": node.get("size", 0),
+                "extension": node.get("extension", "")
+            },
+            "targetPath": target_path,
+            "type": "file",
+            "status": "auto" if target_path and not target_path.endswith("unmatched") else "manual",
+            "tags": {
+                "shot": shot,
+                "task": task,
+                "version": version,
+                "resolution": resolution,
+                "asset": asset,
+                "stage": stage
+            },
+            "matched_rules": [],
+            "used_default_footage_rule": False,
+            "ambiguous_match": False,
+            "ambiguous_options": []
+        }
+
+        print(f"[OPTIMIZED] Created file proposal: {filename} -> {target_path}", file=sys.stderr)
+        return file_proposal
+
+    except Exception as e:
+        print(f"[ERROR] Error in optimized create_simple_mapping for '{node.get('name', 'unknown')}': {e}", file=sys.stderr)
+        return {
+            "id": str(uuid.uuid4()),
+            "original_item": node,
+            "status": "error",
+            "error_message": f"Error processing file: {e}",
+            "targetPath": None,
+            "type": "file",
+            "tags": {},
+            "matched_rules": [],
+            "used_default_footage_rule": False,
+            "ambiguous_match": False,
+            "ambiguous_options": []
+        } 

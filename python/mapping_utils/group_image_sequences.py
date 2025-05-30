@@ -23,64 +23,87 @@ def group_image_sequences(files: List[Dict[str, Any]], batch_id=None, extract_se
     """
     total_files = len(files)
     file_groups = {}
-    file_groups_lock = Lock()
     single_files = []
-    single_files_lock = Lock()
-    progress_interval = 20
+    
+    # Determine if we're on a network path for progress timing
     is_network = False
     if total_files > 0 and "path" in files[0] and is_network_path:
         is_network = is_network_path(files[0]["path"])
-    progress_update_interval = 0.2 if is_network else 0.5
-    def process_file_batch(batch_files, start_idx, progress_lock):
-        local_processed = 0
-        local_single_files = []
-        local_file_groups = {}
-        for file_idx, file_node in enumerate(batch_files):
-            i = start_idx + file_idx
-            try:
-                file_name = file_node.get("name", "")
-                file_ext = file_node.get("extension", "").lower()
-                if file_ext not in SEQUENCE_EXTENSIONS:
-                    local_single_files.append(file_node)
-                    continue
-                file_path = file_node.get("path", "")
-                directory = str(Path(file_path).parent)
-                if extract_sequence_info is None:
-                    raise ValueError("extract_sequence_info function must be provided")
-                sequence_info = extract_sequence_info(file_name)
-                if sequence_info and "frame" in sequence_info:
-                    base_name = sequence_info["base_name"]
-                    filename = file_name
-                    if filename and filename.strip() != "" and "sequence_" not in filename.lower():
-                        info = {
-                            "base_name": base_name,
-                            "frame": sequence_info["frame"],
-                            "suffix": file_ext
-                        }
-                        sequence_info = info
-                    seq_key = (directory, base_name, file_ext)
-                    with file_groups_lock:
-                        if seq_key not in file_groups:
-                            file_groups[seq_key] = []
-                        file_groups[seq_key].append(file_node)
-                else:
-                    local_single_files.append(file_node)
-            except Exception:
-                local_single_files.append(file_node)
-            current_time = time.time()
-        with single_files_lock:
-            single_files.extend(local_single_files)
-        with file_groups_lock:
-            for k, v in local_file_groups.items():
-                if k not in file_groups:
-                    file_groups[k] = []
-                file_groups[k].extend(v)
-    # For simplicity, process sequentially (can parallelize if needed)
-    process_file_batch(files, 0, None)
+    
+    print(f"[SEQUENCE_GROUPING] Processing {total_files} files for sequence detection...")
+    
+    processed_count = 0
+    for file_node in files:
+        try:
+            file_name = file_node.get("name", "")
+            file_ext = file_node.get("extension", "").lower()
+            
+            # Check if file extension can be part of a sequence
+            if file_ext not in SEQUENCE_EXTENSIONS:
+                single_files.append(file_node)
+                processed_count += 1
+                continue
+                
+            file_path = file_node.get("path", "")
+            directory = str(Path(file_path).parent)
+            
+            if extract_sequence_info is None:
+                raise ValueError("extract_sequence_info function must be provided")
+                
+            # Extract sequence information from filename
+            sequence_info = extract_sequence_info(file_name)
+            
+            if sequence_info and "frame" in sequence_info and sequence_info.get("base_name"):
+                base_name = sequence_info["base_name"]
+                
+                # Create sequence key based on directory, base name, and extension
+                seq_key = (directory, base_name, file_ext)
+                
+                if seq_key not in file_groups:
+                    file_groups[seq_key] = []
+                    
+                # Add file to the appropriate sequence group
+                file_groups[seq_key].append(file_node)
+            else:
+                # If no sequence info found, treat as single file
+                single_files.append(file_node)
+                
+        except Exception as e:
+            # If any error occurs, treat as single file
+            print(f"[SEQUENCE_GROUPING] Error processing file {file_node.get('name', 'unknown')}: {e}")
+            single_files.append(file_node)
+            
+        processed_count += 1
+        
+        # Progress reporting for large datasets
+        if processed_count % 10000 == 0:
+            print(f"[SEQUENCE_GROUPING] Processed {processed_count}/{total_files} files...")
+    
+    # Convert grouped files into sequence objects
     sequences = []
+    sequence_count = 0
     for seq_key, group in file_groups.items():
+        # Only consider it a sequence if there are multiple files
         if len(group) > 1:
-            sequences.append({"base_name": seq_key[1], "suffix": seq_key[2], "files": group, "directory": seq_key[0], "frame_count": len(group)})
+            directory, base_name, file_ext = seq_key
+            
+            # Create sequence object
+            sequence_obj = {
+                "base_name": base_name,
+                "suffix": file_ext,
+                "files": group,
+                "directory": directory,
+                "frame_count": len(group),
+                "frame_numbers": [extract_sequence_info(f.get("name", "")).get("frame", 0) for f in group if extract_sequence_info(f.get("name", ""))],
+                "frame_range": f"1-{len(group)}"  # Simplified frame range
+            }
+            sequences.append(sequence_obj)
+            sequence_count += 1
         else:
+            # Single file in group, add to single files
             single_files.extend(group)
+    
+    print(f"[SEQUENCE_GROUPING] Results: {sequence_count} sequences, {len(single_files)} single files")
+    print(f"[SEQUENCE_GROUPING] Sequence optimization: {len(sequences)} sequences vs {sum(seq['frame_count'] for seq in sequences)} individual files")
+    
     return sequences, single_files

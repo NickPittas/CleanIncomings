@@ -155,9 +155,15 @@ def generate_simple_target_path(
     ]
 
     final_dynamic_segments = []
-    for segment in dynamic_segments_ordered:
+    for i, segment in enumerate(dynamic_segments_ordered):
         if segment is not None and segment.strip() != "":
-            final_dynamic_segments.append(segment.lower()) # Standardize to lowercase
+            # Apply specific case rules based on segment type
+            if i == 0:  # parsed_shot - preserve original case
+                final_dynamic_segments.append(segment)
+            elif i == 4:  # parsed_resolution - convert to uppercase
+                final_dynamic_segments.append(segment.upper())
+            else:  # parsed_stage, parsed_task, parsed_asset, parsed_version - convert to lowercase
+                final_dynamic_segments.append(segment.lower())
 
     # --- 4. Assemble Final Path (Rule 5) ---
     # Ensure root_output_dir is absolute and normalized

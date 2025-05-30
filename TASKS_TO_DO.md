@@ -35,6 +35,14 @@
        - Ensured the `profile_data` dictionary includes essential keys like `name`, and placeholder defaults for `vfx_root` and `description` if not found during the merge.
        - This allows the subsequent code (including `MappingGenerator`) to work with the expected single-dictionary profile structure.
 
+### 3. Enhanced Logging and Progress Reporting for Mapping Generation
+   - **Goal:** Improve user feedback during the 'MAPPING GENERATION' phase by providing detailed progress updates.
+   - **Actions Taken:**
+     - Modified `mapping_utils/generate_mappings.py` to emit detailed status via a `status_callback` (e.g., files collected, sequences processed, single files mapped).
+     - Propagated `status_callback` through `MappingGenerator` and `GuiNormalizerAdapter`.
+     - Updated `GuiNormalizerAdapter.scan_and_normalize_structure` to correctly call `mapping_generator.generate_mappings` with the `status_callback` and process its results.
+     - Enhanced `app_gui.py` (`_process_adapter_status`) to interpret new `mapping_generation` status messages and update the status label and progress bar accordingly (e.g., showing file counts like 'Processing sequence 10/50').
+
 ## Next Steps
 
 ### 1. Thorough Application Testing
@@ -42,7 +50,8 @@
    - **Actions:**
      - Run `app_gui.py` and perform scans with various profiles (e.g., "Simple Project", "Sphere Project").
      - Check for any new runtime errors in the terminal output.
-     - Verify that progress is accurately reported and displayed in the GUI (if applicable, or via logs if GUI progress display is not yet fully implemented/confirmed post-WebSocket removal).
+     - Verify that progress during scanning (file collection) is accurately reported.
+     - **Specifically test the new detailed progress reporting for the 'MAPPING GENERATION' phase (e.g., progress of sequence processing, single file mapping) to ensure the status label and progress bar reflect these new updates.**
      - Confirm that file/folder normalization proposals are generated correctly based on selected profiles.
      - Test edge cases: empty directories, directories with many files, different file types.
 

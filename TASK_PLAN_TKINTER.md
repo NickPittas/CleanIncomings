@@ -49,7 +49,7 @@ This document outlines the steps and features for rebuilding the Clean Incomings
     *   Run scan in a separate thread to keep UI responsive.
     *   Populate Source Folder Treeview.
     *   Populate Preview Treeview with initial scan results.
-    *   Implement progress updates (via queue from thread or adapted WebSocket).
+    *   Implement progress updates (achieved via `status_callback` and `self.after()`).
 4.  **Mapping Logic Integration (`normalizer.py map`):**
     *   Run mapping in a separate thread.
     *   Use selected profile and scanned data.
@@ -59,8 +59,12 @@ This document outlines the steps and features for rebuilding the Clean Incomings
     *   Implement file/folder copy and move logic (threaded).
     *   Update progress bars and status.
 6.  **Progress Updates & ETA:**
-    *   Develop a robust mechanism for worker threads to send progress (percentage, current file, ETA) to the main UI thread for display.
-    *   This will likely involve Python's `queue.Queue` and `root.after()` polling.
+    *   **Implemented:** A `status_callback` mechanism is used by worker threads (via `GuiNormalizerAdapter`) to send detailed progress updates to the main UI thread.
+    *   **Details:**
+        *   The callback passes a dictionary with `type` (e.g., `"scan"`, `"mapping_generation"`) and `data` (containing status, message, counts like `current_file_count`, `total_files`).
+        *   The main UI thread (`app_gui.py`) uses `self.after(0, ...)` to process these updates, ensuring thread safety for UI modifications (status label, progress bar).
+        *   This system has been specifically enhanced to provide granular feedback during the 'MAPPING GENERATION' phase, including progress of file collection, sequence processing, and single file mapping stages.
+    *   Further refinement for ETA calculation could be a future step if needed.
 
 ## IV. Advanced Features & Interactivity
 1.  **Preview Treeview Enhancements:**

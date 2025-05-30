@@ -35,6 +35,7 @@ class FileSystemScanner:
             r"node_modules",
             r"\.tmp",
             r"\.cache",
+            r"(?i)^Thumbs\.db$",
         ]
         self.progress_dir = os.path.join(os.path.dirname(__file__), "_progress")
         os.makedirs(self.progress_dir, exist_ok=True)

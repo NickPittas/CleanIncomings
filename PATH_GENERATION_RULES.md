@@ -62,8 +62,11 @@ This document outlines the rules for generating target folder paths based on fil
 -   Keyword matching against `profiles.json` lists is **case-insensitive**.
 -   For the dynamic path segments (`SHOT`, `STAGE`, `TASK`, `ASSET`, `RESOLUTION`, `VERSION`) that form folder names:
     -   Their values are extracted from filenames.
-    -   When these values are used to create actual folder names, they should be **standardized to lowercase** (e.g., `WTFB0010` becomes `wtfb0010`, `REND` becomes `rend`). This ensures consistency and avoids potential issues on case-insensitive file systems like Windows.
+    -   Case conversion rules are applied as follows:
+        -   **Shot Name**: Preserved as-is from the filename (e.g., `OLNT0010` remains `OLNT0010`)
+        -   **Resolution**: Converted to uppercase (e.g., `4k` becomes `4K`, `12k` becomes `12K`)
+        -   **All others** (Stage, Task, Asset, Version): Converted to lowercase (e.g., `PREVIZ` becomes `previz`, `REND` becomes `rend`)
 
 ## 5. Final Path Assembly
 -   The final path is constructed as:
-    `USER_SELECTED_ROOT_DIR / [Base Sub-Path from Profile] / [Ordered, Lowercased Dynamic Segments] / ORIGINAL_FILENAME`
+    `USER_SELECTED_ROOT_DIR / [Base Sub-Path from Profile] / [Ordered Dynamic Segments with Case Rules Applied] / ORIGINAL_FILENAME`

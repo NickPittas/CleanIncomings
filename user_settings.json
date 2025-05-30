@@ -1,0 +1,23 @@
+{
+  "ui_state": {
+    "window_geometry": "1578x801+259+196",
+    "window_position": "+259+196",
+    "log_panel_collapsed": true,
+    "horizontal_pane_position": 336,
+    "vertical_pane_positions": [
+      499
+    ],
+    "source_folder": "V:/OLD/04_vfx/FOX/196799130_PREVIZ_v022",
+    "destination_folder": "V:/New folder",
+    "selected_profile": "Sphere Project",
+    "appearance_mode": "System",
+    "color_theme": "blue",
+    "scan_threads": 8,
+    "copy_threads": 32
+  },
+  "performance": {
+    "enable_multithreading": true,
+    "max_concurrent_scans": 8,
+    "max_concurrent_copies": 16
+  }
+}

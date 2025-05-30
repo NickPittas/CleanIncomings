@@ -24,24 +24,49 @@ def extract_sequence_info(
             return None
         if "sequence_" in filename or filename == "_####" or filename.endswith("_####"):
             return None
-        pattern = r"^(.+?)\.(\d{1,10})(\.[^.]+)$"
-        try:
-            match = re.match(pattern, filename, re.IGNORECASE)
-            if match:
-                base_name, frame_str, suffix = match.groups()
-                if not base_name or base_name == "_" or "sequence_" in base_name:
-                    return None
-                try:
-                    frame_num = int(frame_str)
-                    return {
-                        "base_name": base_name,
-                        "frame": frame_num,
-                        "suffix": suffix
-                    }
-                except ValueError:
-                    pass
-        except Exception:
-            pass
+            
+        # Multiple patterns to detect sequences with different frame number positions
+        patterns = [
+            # Pattern 1: basename.framenumber.extension (e.g., sequence.1001.exr)
+            r"^(.+?)\.(\d{1,10})(\.[^.]+)$",
+            # Pattern 2: basename_framenumber.extension (e.g., ASSET_01_v019_ALi_1001.exr) 
+            r"^(.+?)_(\d{4,10})(\.[^.]+)$",
+            # Pattern 3: basename.framenumber_suffix.extension (e.g., ASSET_01_v019.1001_ALi.exr)
+            r"^(.+?)\.(\d{4,10})_(.+?)(\.[^.]+)$",
+            # Pattern 4: basename_framenumber_suffix.extension (e.g., ASSET_01_v019_1001_ALi.exr)
+            r"^(.+?)_(\d{4,10})_(.+?)(\.[^.]+)$"
+        ]
+        
+        for pattern in patterns:
+            try:
+                match = re.match(pattern, filename, re.IGNORECASE)
+                if match:
+                    groups = match.groups()
+                    if len(groups) >= 3:
+                        if len(groups) == 3:  # Pattern 1 and 2
+                            base_name, frame_str, suffix = groups
+                        else:  # Pattern 3 and 4
+                            base_name, frame_str, middle_part, suffix = groups
+                            # Reconstruct base name to include the middle part for consistency
+                            base_name = f"{base_name}_{middle_part}" if middle_part else base_name
+                            
+                        if not base_name or base_name == "_" or "sequence_" in base_name:
+                            continue
+                            
+                        try:
+                            frame_num = int(frame_str)
+                            # Only consider it a valid frame if it's within reasonable range
+                            if 0 <= frame_num <= 999999:  # Reasonable frame number range
+                                return {
+                                    "base_name": base_name,
+                                    "frame": frame_num,
+                                    "suffix": suffix
+                                }
+                        except ValueError:
+                            continue
+            except Exception:
+                continue
+                
         return None
 
     # --- Full advanced logic for dict/list input ---

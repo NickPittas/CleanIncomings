@@ -1,6 +1,6 @@
 import re
 from pathlib import Path
-from typing import Dict, Any # Added for type hinting
+from typing import Dict, Any, Optional, Callable # Added for type hinting
 from pathlib import Path
 from .mapping_utils.init_patterns_from_profile import init_patterns_from_profile
 from .mapping_utils.generate_mappings import generate_mappings
@@ -137,7 +137,7 @@ class MappingGenerator:
     def _init_patterns_from_profile(self, profile):
         return init_patterns_from_profile(self, profile)
 
-    def generate_mappings(self, tree, profile: Dict[str, Any], root_output_dir: str, batch_id=None, **kwargs):
+    def generate_mappings(self, tree, profile: Dict[str, Any], root_output_dir: str, batch_id=None, status_callback: Optional[Callable[[Dict[str, Any]], None]] = None, **kwargs):
         # 'profile' is now expected to be a dictionary, e.g., {"name": "ProfileName", "rules": [...list_of_rules...]}
         
         # The core mapping_utils.generate_mappings function expects the full profile dictionary
@@ -156,21 +156,26 @@ class MappingGenerator:
                 f"or 'rules' is not a list. Profile keys: {list(profile.keys())}"
             )
 
+        # Ensure status_callback from kwargs is prioritized if explicitly passed,
+        # otherwise use the one from the signature.
+        actual_status_callback = kwargs.pop('status_callback', status_callback)
+
         return generate_mappings(
-            tree=tree,
-            profile=profile,  # Pass the full profile dictionary here
-            batch_id=batch_id,
-            group_image_sequences=self._group_image_sequences,
-            extract_sequence_info=self._extract_sequence_info,
-            is_network_path=is_network_path,
-            # Lambdas now receive the full profile dict as 'prof_dict'.
-            # _create_sequence_mapping will receive the full prof_dict.
-            # _create_simple_mapping still expects only the rules list for now.
-            create_sequence_mapping=lambda seq, prof_dict, orig_base_name: self._create_sequence_mapping(seq, prof_dict, root_output_dir, orig_base_name),
-            create_simple_mapping=lambda node, prof_dict: self._create_simple_mapping(node, prof_dict['rules'], root_output_dir),
-            finalize_sequences=self._finalize_sequences,
-            **kwargs
-        )
+        tree=tree,
+        profile=profile,  # Pass the full profile dictionary here
+        batch_id=batch_id,
+        group_image_sequences=self._group_image_sequences,
+        extract_sequence_info=self._extract_sequence_info,
+        is_network_path=is_network_path,
+        # Lambdas now receive the full profile dict as 'prof_dict'.
+        # _create_sequence_mapping will receive the full prof_dict.
+        # _create_simple_mapping still expects only the rules list for now.
+        create_sequence_mapping=lambda seq, prof_dict, orig_base_name: self._create_sequence_mapping(seq, prof_dict, root_output_dir, orig_base_name),
+        create_simple_mapping=lambda node, prof_dict: self._create_simple_mapping(node, prof_dict['rules'], root_output_dir),
+        finalize_sequences=self._finalize_sequences,
+        status_callback=actual_status_callback, # Pass it here
+        **kwargs # Pass remaining kwargs
+    )
 
     def _init_patterns_from_profile(self, profile):
         return init_patterns_from_profile(self, profile)

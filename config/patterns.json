@@ -14,8 +14,9 @@
       "renders",
       "textures"
     ],
-    "MAIN": [
-      "MAIN"
+    "raw": [
+      "vrayraw.",
+      "vrayraw_"
     ],
     "albedo": [
       "albedo",
@@ -79,7 +80,6 @@
       "redshiftzdepth",
       "rmanz",
       "vrayzdepth",
-      "z",
       "zdepth"
     ],
     "diffuse": [
@@ -221,6 +221,7 @@
       "redshifttransmission",
       "rmantransmission",
       "vrayrawrefraction",
+      "refr",
       "vrayrefraction"
     ],
     "rgb": [
@@ -266,6 +267,7 @@
       "octanesss",
       "redshiftsss",
       "rmansss",
+      "sss",
       "vraysss"
     ],
     "velocity": [
@@ -283,6 +285,8 @@
     "volume": [
       "arnoldvolume",
       "cyclesvolume",
+      "volume",
+      "vol",
       "octanevolume",
       "redshiftvolume"
     ]
@@ -310,7 +314,9 @@
   "assetPatterns": [
     "main_arch",
     "second_arch",
+    "master",
     "hero",
+    "scene",
     "background",
     "vehicle",
     "character",

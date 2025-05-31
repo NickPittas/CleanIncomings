@@ -1,8 +1,6 @@
----
-trigger: always_on
----
+# AI Coding Assistant Configuration
 
-## AI Coding Assistant Best Practices & Windsurf Rules
+## AI Coding Assistant Best Practices & Rules
 
 ### File Structure & Size
 
@@ -58,33 +56,33 @@ trigger: always_on
   4. E2E Tests
   5. Package Build
 
-### Windsurf Movement Rules
+### Copilot Movement Rules
 
-* Windsurf should stay within the file being edited unless cross-file references are updated.
-* When updating a config value (e.g., a regex), Windsurf moves to all usage sites for verification.
-* For any new feature, Windsurf should follow test-first approach: write tests before implementation.
+* Copilot should stay within the file being edited unless cross-file references are updated.
+* When updating a config value (e.g., a regex), Copilot moves to all usage sites for verification.
+* For any new feature, Copilot should follow test-first approach: write tests before implementation.
 
 ---
 
-## AI Coding Assistant Windsurf Rules
+## AI Coding Assistant Copilot Rules
 
 1. **Context Awareness**
 
-   * Windsurf movements should prioritize related code blocks or sections when writing or updating normalization logic, UI components, or configuration definitions.
+   * Copilot movements should prioritize related code blocks or sections when writing or updating normalization logic, UI components, or configuration definitions.
 2. **Section-Based Editing**
 
-   * When editing `README.md`, focus only within its boundaries; avoid touching `TASKS.md` or `Windsurf_RULES.md`.
-   * Similarly, editing `TASKS.md` or `Windsurf_RULES.md` should not modify other files.
+   * When editing `README.md`, focus only within its boundaries; avoid touching `TASKS.md` or `Copilot_RULES.md`.
+   * Similarly, editing `TASKS.md` or `Copilot_RULES.md` should not modify other files.
 3. **Structured Updates**
 
    * For changes to mapping logic, locate `Normalization Logic & Data Models` section in `README.md` and `TASKS.md` accordingly.
-   * When adjusting schema, Windsurf should navigate to the `Database Schema` entries in `TASKS.md`.
+   * When adjusting schema, Copilot should navigate to the `Database Schema` entries in `TASKS.md`.
 4. **YAML/JSON Config Insertion**
 
-   * When adding or updating `shot_codes`, `task_map`, or `res_patterns`, Windsurf should target JSON/YAML code blocks under `Settings` or normalization sections.
+   * When adding or updating `shot_codes`, `task_map`, or `res_patterns`, Copilot should target JSON/YAML code blocks under `Settings` or normalization sections.
 5. **Testing Edits**
 
-   * For test plan modifications, Windsurf moves to the `Testing Strategy` in `README.md` and to `Unit`, `Integration`, `E2E` tasks in `TASKS.md`.
+   * For test plan modifications, Copilot moves to the `Testing Strategy` in `README.md` and to `Unit`, `Integration`, `E2E` tasks in `TASKS.md`.
 6. **Drag-and-Drop UI Rules**
 
    * Edits to UI workflows should occur in the `UI Components & Workflows` section of `README.md`.

@@ -22,7 +22,7 @@
    - Move all profile definitions to a `Profiles.json` or `Profiles.yaml` file.
    - Profiles should only define:
      - The base/root path for the project.
-     - The folder structure for each asset type (e.g., where to place shots, renders, plates, videos, etc.).
+     - The folder structure for each asset type (e.g., where to place shots, renders, plates, videos, etc.), which guides the path generation as detailed in `PATH_GENERATION_RULES.md`.
    - No pattern or mapping logic should remain in the profile definition—just folder structure and root path.
 
 6. **Mapping Flow**

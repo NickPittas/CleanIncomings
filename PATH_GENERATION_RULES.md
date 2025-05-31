@@ -41,21 +41,18 @@ This document outlines the rules for generating target folder paths based on fil
 -   **Version Name**: Use as extracted (e.g., `v0055` remains `v0055`).
 
 ### 3.3. Order of Dynamic Segments
--   The fixed order for appending dynamic segments after the base path is:
+-   The fixed order for appending dynamic segments after the base sub-path is:
     1.  `SHOT`
-    2.  `STAGE`
-    3.  `TASK`
-    4.  `ASSET`
-    5.  `RESOLUTION`
-    6.  `VERSION`
--   If a segment is not extracted from the filename (e.g., no resolution found), that part of the path is simply omitted.
+    2.  `VERSION`
+-   If a segment is not extracted from the filename (e.g., no resolution found), that part of the path is simply omitted. The original filename is then placed in the fully constructed directory.
 
 ### 3.4. Example
 -   **Filename**: `WTFB0010_REND_FishFlock-2_v0055_.VrayRAW_.1001.exr`
--   **Extracted**: `shot="WTFB0010"`, `task="REND"`, `asset="VrayRAW"`, `version="v0055"` (no stage, no resolution)
+-   **Extracted**: `shot="WTFB0010"`, `task="REND"`, `asset="VrayRAW"`, `version="v0055"`
 -   **User Selected Root**: `D:\\New_folder`
--   **Profile Rule Match**: `task="REND"` matches a rule pointing to base sub-path `"3D\\Renders"`.
--   **Resulting Path (Conceptual, before case standardization for folder names)**: `D:\\New_folder\\3D\\Renders\\WTFB0010\\REND\\VrayRAW\\v0055\\WTFB0010_REND_FishFlock-2_v0055_.VrayRAW_.1001.exr`
+-   **Profile Rule Match**: `task="REND"` matches a rule in the selected profile, which points to the base sub-path `"3D\\Renders"`. (The keywords `task="REND"` and `asset="VrayRAW"` are used for this lookup, not typically for creating additional path segments unless explicitly part of the profile's defined relative path string).
+-   **Resulting Path**: `D:\\New_folder\\3D\\Renders\\WTFB0010\\v0055\\WTFB0010_REND_FishFlock-2_v0055_.VrayRAW_.1001.exr`
+    (This assumes `SHOT` (`WTFB0010`) and `VERSION` (`v0055`) are appended to the base sub-path `3D\\Renders`. The original filename is then placed in this directory.)
 
 ## 4. Case Sensitivity for Generated Path Segments
 

@@ -64,6 +64,61 @@
         "plates",
         "DELIVERY"
       ]
+    },
+    {
+      "Video/Footage/ARRI": [
+        "footage",
+        "source",
+        "video",
+        "plate",
+        "plt",
+        "plates",
+        "DELIVERY"
+      ]
+    },
+    {
+      "Video/Footage/RED": [
+        "footage",
+        "source",
+        "video",
+        "plate",
+        "plt",
+        "plates",
+        "DELIVERY"
+      ]
+    },
+    {
+      "Video/Footage/Sony": [
+        "footage",
+        "source",
+        "video",
+        "plate",
+        "plt",
+        "plates",
+        "DELIVERY"
+      ]
+    },
+    {
+      "Video/Footage/Canon": [
+        "footage",
+        "source",
+        "video",
+        "plate",
+        "plt",
+        "plates",
+        "DELIVERY"
+      ]
+    },
+    {
+      "Video/Footage/DJI": [
+        "footage",
+        "source",
+        "video",
+        "plate",
+        "plt",
+        "plates",
+        "DELIVERY"
+      ]
     }
   ],
   "Sphere Project": [

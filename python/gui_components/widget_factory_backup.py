@@ -497,34 +497,22 @@ class WidgetFactory:
             self.app.batch_edit_btn.configure(state="normal" if has_selection else "disabled")
 
     def _show_context_menu(self, event):
-        """Show right-click context menu with restored options, playback, and debugging."""
-        print("[DEBUG_CTX_MENU] _show_context_menu called.")
+        """Show right-click context menu with restored options and robustness."""
+        # Ensure preview_tree exists before creating a menu for it
         if not hasattr(self.app, 'preview_tree'):
-            print("[DEBUG_CTX_MENU] Error: preview_tree not found on app instance.")
+            print("Error: preview_tree not found on app instance for context menu.")
             return
         
-        context_menu = tk.Menu(self.app.preview_tree, tearoff=0)
+        context_menu = tk.Menu(self.app.preview_tree, tearoff=0)  # Correctly parented to preview_tree
         
         has_selection = False
-        is_single_selection = False
-        selected_item_data = None
-        stats = {'total': 0, 'sequences': 0, 'files': 0}
+        stats = {'total': 0, 'sequences': 0, 'files': 0}  # Default stats
 
         if hasattr(self.app, 'tree_manager') and hasattr(self.app.tree_manager, 'get_selection_stats'):
             stats = self.app.tree_manager.get_selection_stats()
             has_selection = stats['total'] > 0
-            is_single_selection = stats['total'] == 1
-            print(f"[DEBUG_CTX_MENU] Stats: {stats}, HasSelection: {has_selection}, IsSingle: {is_single_selection}")
-            if is_single_selection:
-                selected_ids = self.app.preview_tree.selection()
-                if selected_ids and hasattr(self.app, 'preview_tree_item_data_map'):
-                    item_id = selected_ids[0]
-                    selected_item_data = self.app.preview_tree_item_data_map.get(item_id)
-                    print(f"[DEBUG_CTX_MENU] Single selection: ItemID: {item_id}, ItemData: {selected_item_data}")
-                else:
-                    print("[DEBUG_CTX_MENU] Single selection but no selected_ids or preview_tree_item_data_map.")
         else:
-            print("[DEBUG_CTX_MENU] Warning: tree_manager or get_selection_stats not available.")
+            print("Warning: tree_manager or get_selection_stats not available for context menu.")
 
         if has_selection:
             if hasattr(self, '_open_batch_edit_dialog'):
@@ -532,91 +520,11 @@ class WidgetFactory:
                     label=f"Batch Edit ({stats['total']} items)",
                     command=self._open_batch_edit_dialog
                 )
-            context_menu.add_separator()                
-            # Playback options (only for single file selection)
-            if is_single_selection and selected_item_data:
-                item_type = selected_item_data.get("type")
-                # Corrected to use "source_path" instead of "full_path"
-                full_path = selected_item_data.get("source_path") 
-                filename = selected_item_data.get("filename", "item")
-                print(f"[DEBUG_CTX_MENU] Playback pre-check: ItemType: {item_type}, FullPath (from source_path): {full_path}, Filename: {filename}")
-
-            if (item_type == "File" or item_type == "Sequence") and full_path:  # Enable for both files and sequences
-                print(f"[DEBUG_CTX_MENU] Item is a {item_type} with a full path. Checking playback conditions.")
-
-                # --- FFPLAY OPTION ---
-                ffplay_available = hasattr(self.app, 'media_player_utils') and hasattr(self.app.media_player_utils, 'launch_ffplay')
-                print(f"[DEBUG_CTX_MENU] FFplay check: hasattr media_player_utils: {hasattr(self.app, 'media_player_utils')}, hasattr launch_ffplay: {hasattr(self.app, 'media_player_utils') and hasattr(self.app.media_player_utils, 'launch_ffplay')}")
-                if ffplay_available:
-                    def debug_ffplay_launch(file_path):
-                        print(f"[DEBUG_FFPLAY] FFplay menu item clicked for: {file_path}")
-                        try:
-                            result = self.app.play_with_ffplay_handler(file_path)
-                            print(f"[DEBUG_FFPLAY] play_with_ffplay_handler returned: {result}")
-                        except Exception as e:
-                            print(f"[DEBUG_FFPLAY] Error in play_with_ffplay_handler: {e}")
-                            import traceback
-                            traceback.print_exc()
-                    
-                    context_menu.add_command(
-                        label=f"Play '{filename}' with ffplay", 
-                        command=lambda p=full_path: debug_ffplay_launch(p)
-                    )
-                    print(f"[DEBUG_CTX_MENU] Added ffplay option for {filename}.")
-                else:
-                    print(f"[DEBUG_CTX_MENU] FFplay prerequisites not met for {filename}.")
-                
-                # --- VLC OPTION ---
-                # Ensure self.app.VLCPlayerWindow is checked as it was a previous point of failure
-                vlc_player_class_available = hasattr(self.app, 'VLCPlayerWindow') and self.app.VLCPlayerWindow is not None
-                vlc_ready = hasattr(self.app, 'vlc_module_available') and self.app.vlc_module_available and hasattr(self, '_open_vlc_player_window') and vlc_player_class_available
-                print(f"[DEBUG_CTX_MENU] VLC check: vlc_module_available: {hasattr(self.app, 'vlc_module_available') and self.app.vlc_module_available}, hasattr _open_vlc_player_window: {hasattr(self, '_open_vlc_player_window')}, vlc_player_class_available: {vlc_player_class_available}")
-                if vlc_ready:
-                    context_menu.add_command(
-                        label=f"Play '{filename}' Embedded (VLC)", 
-                        command=lambda p=full_path: self._open_vlc_player_window(p)
-                    )
-                    print(f"[DEBUG_CTX_MENU] Added VLC option for {filename}.")
-                else:
-                    print(f"[DEBUG_CTX_MENU] VLC prerequisites not met for {filename}.")
-                
-                # --- MPV OPTION ---
-                mpv_available = hasattr(self.app, 'media_player_utils') and hasattr(self.app.media_player_utils, 'launch_mpv_subprocess')
-                print(f"[DEBUG_CTX_MENU] MPV check: hasattr media_player_utils: {hasattr(self.app, 'media_player_utils')}, hasattr launch_mpv_subprocess: {mpv_available}")
-                if mpv_available:
-                    def debug_mpv_launch(file_path_or_pattern):
-                        print(f"[DEBUG_MPV_CTX] MPV menu item clicked for: {file_path_or_pattern}")
-                        try:
-                            # Ensure the handler exists on the app instance
-                            if hasattr(self.app, 'play_with_mpv_handler'):
-                                result = self.app.play_with_mpv_handler(file_path_or_pattern)
-                                print(f"[DEBUG_MPV_CTX] play_with_mpv_handler returned: {result}")
-                            else:
-                                print(f"[DEBUG_MPV_CTX] Error: play_with_mpv_handler not found on app instance.")
-                                messagebox.showerror("MPV Error", "MPV playback handler is not available.")
-                        except Exception as e:
-                            print(f"[DEBUG_MPV_CTX] Error in play_with_mpv_handler: {e}")
-                            import traceback
-                            traceback.print_exc()
-                            messagebox.showerror("MPV Error", f"Error launching MPV: {e}")
-                    
-                    context_menu.add_command(
-                        label=f"Play '{filename}' with MPV", 
-                        command=lambda p=full_path: debug_mpv_launch(p)
-                    )
-                    print(f"[DEBUG_CTX_MENU] Added MPV option for {filename}.")
-                else:
-                    print(f"[DEBUG_CTX_MENU] MPV prerequisites not met for {filename} (launch_mpv_subprocess not found).")
-
-                if ffplay_available or vlc_ready or mpv_available:
-                    context_menu.add_separator()
-            else:
-                print(f"[DEBUG_CTX_MENU] Item is not a file or has no full path. ItemType: {item_type}, FullPath: {full_path}")
+            context_menu.add_separator()
 
             can_copy_move = False
             if hasattr(self.app, 'selected_destination_folder'):
                 can_copy_move = bool(self.app.selected_destination_folder.get())
-            print(f"[DEBUG_CTX_MENU] Can copy/move: {can_copy_move}")
 
             if hasattr(self.app, 'file_operations_manager'):
                 if hasattr(self.app.file_operations_manager, 'on_copy_selected_click'):
@@ -632,9 +540,8 @@ class WidgetFactory:
                         state="normal" if can_copy_move else "disabled"
                     )
             else:
-                print("[DEBUG_CTX_MENU] Warning: file_operations_manager not available for copy/move.")
+                print("Warning: file_operations_manager not available for context menu copy/move.")
         else:
-            print("[DEBUG_CTX_MENU] No items selected.")
             context_menu.add_command(label="No items selected", state="disabled")
         
         context_menu.add_separator()
@@ -647,9 +554,7 @@ class WidgetFactory:
             context_menu.add_command(label="Clear Selection", command=self._clear_selection)
         
         try:
-            print("[DEBUG_CTX_MENU] Attempting to show context menu.")
             context_menu.tk_popup(event.x_root, event.y_root)
-            print("[DEBUG_CTX_MENU] Context menu shown.")
         finally:
             context_menu.grab_release()
 
@@ -681,9 +586,9 @@ class WidgetFactory:
         if hasattr(self.app, 'vlc_player_window_instance') and \
            self.app.vlc_player_window_instance and \
            self.app.vlc_player_window_instance.winfo_exists():
-            self.app.vlc_player_window_instance.lift()  # Bring to front
+            self.app.vlc_player_window_instance.lift() # Bring to front
             if self.app.vlc_player_window_instance.media_path != media_path:
-                self.app.vlc_player_window_instance.load_media(media_path)  # Load new media
+                self.app.vlc_player_window_instance.load_media(media_path) # Load new media
             return
 
         # Create a new player window instance
@@ -932,6 +837,12 @@ class WidgetFactory:
         """Create the collapsible log frame."""
         log_container = ctk.CTkFrame(parent, corner_radius=self.app.current_corner_radius)
         log_container.grid(row=1, column=0, padx=10, pady=(5,10), sticky="nsew")
+        log_container.grid_rowconfigure(1, weight=1)  # Log content expands
+        log_container.grid_columnconfigure(0, weight=1)
+
+        # Store reference for theme application
+        self.app.log_frame = log_container
+
         # Log header with toggle button
         log_header_frame = ctk.CTkFrame(log_container, fg_color="transparent")
         log_header_frame.grid(row=0, column=0, padx=5, pady=(5,0), sticky="ew")

@@ -85,15 +85,18 @@ class ScanManager:
             
             # Update status on main thread
             QTimer.singleShot(0, lambda: self.app.status_label.setText("Starting scan..."))
-              # Run the scan/normalization process
-            result_data_dict = self.app.normalizer.scan_and_normalize_structure(
-                base_path=source_path,
-                profile_name=profile_name,
+            
+            # Run the scan/normalization process
+            result_data_dict = self.app.normalizer.scan_and_build_proposals(
+                source_root=source_path,
                 destination_root=destination_root,
+                profile_name=profile_name,
                 status_callback=self.update_scan_status
-            )            
-            # The result already contains both tree data and proposals
-            # No need to get tree data separately
+            )
+            
+            # Get original tree data from adapter
+            original_tree_data = self.app.normalizer.get_last_scan_tree_data()
+            result_data_dict['tree_data'] = original_tree_data
             
             # Put successful result in queue
             self.result_queue.put({

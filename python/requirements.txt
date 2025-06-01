@@ -1,6 +1,7 @@
 # Core dependencies for VFX Folder Normalizer
 pathlib2>=2.3.7
 typing-extensions>=4.0.0
+python-vlc>=3.0.20 # Added for embedded media playback
 
 # Testing dependencies
 pytest>=7.0.0
@@ -12,4 +13,4 @@ flake8>=5.0.0
 
 # Additional testing utilities
 pytest-cov>=4.0.0
-pytest-mock>=3.0.0 
+pytest-mock>=3.0.0

@@ -1,21 +1,12 @@
-# Main application GUI module - PyQt5 Version
-print("--- EXECUTING PYQT5 APP_GUI.PY ---")
-import sys
-import os
+# Main application GUI module - Modular Version
+print("--- EXECUTING MODULAR APP_GUI.PY ---")
+import tkinter as tk
+import customtkinter as ctk
 import json
+import os
+import sys  # Added sys
 from pathlib import Path
 from typing import List, Dict, Any, Optional
-
-from PyQt5.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-    QSplitter, QFrame, QLabel, QPushButton, QLineEdit, QComboBox,
-    QTreeWidget, QTreeWidgetItem, QTextEdit, QStatusBar, QHeaderView
-)
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import QFont, QIcon, QPixmap
-
-# Import the Nuke-inspired theme
-from python.gui_components.nuke_theme import apply_nuke_theme
 
 # --- Start of VLC Path Configuration ---
 def get_application_path():

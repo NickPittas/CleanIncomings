@@ -1,19 +1,20 @@
 {
   "ui_state": {
-    "window_geometry": "1578x801+545+464",
-    "window_position": "+545+464",
-    "log_panel_collapsed": true,
-    "horizontal_pane_position": 373,
+    "window_geometry": "1578x801+113+143",
+    "window_position": "+113+143",
+    "log_panel_collapsed": false,
+    "horizontal_pane_position": 0,
     "vertical_pane_positions": [
-      552
+      1230
     ],
-    "source_folder": "V:/OLD/05_comp/KITC",
-    "destination_folder": "V:/New folder/New folder",
+    "source_folder": "Z:/196799130_PREVIZ_v022",
+    "destination_folder": "Z:/DEMO",
     "selected_profile": "Sphere Project",
     "appearance_mode": "System",
     "color_theme": "blue",
     "scan_threads": 8,
-    "copy_threads": 32
+    "copy_threads": 32,
+    "ffplay_path": "C:/Users/npitt/AppData/Local/Microsoft/WinGet/Packages/Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe/ffmpeg-7.1.1-full_build/bin/ffplay.exe"
   },
   "performance": {
     "enable_multithreading": true,

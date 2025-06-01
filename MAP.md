@@ -148,7 +148,7 @@ This directory contains various helper modules for the `mapping.py` module. Most
     -   **`custom_blue.json`**: A CustomTkinter JSON theme file.
 -   **`icons/` (Directory)**:
     -   Contains various `.png` files used as icons in the GUI (e.g., `folder_closed_24.png`, `file_24.png`). Loaded by `ThemeManager`.
--   **`user_settings.json`**: (Located at the project root) Stores user-specific UI state and settings. Managed by `SettingsManager`.
+-   **`user_settings.json`**: (Located at the project root) Stores user-specific UI state and settings. Managed by `SettingsManager`
 
 ## Temporary/Generated Files & Directories
 

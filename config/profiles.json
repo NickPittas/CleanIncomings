@@ -67,57 +67,27 @@
     },
     {
       "Video/Footage/ARRI": [
-        "footage",
-        "source",
-        "video",
-        "plate",
-        "plt",
-        "plates",
-        "DELIVERY"
+        "ARRI_Camera_File_Task"
       ]
     },
     {
       "Video/Footage/RED": [
-        "footage",
-        "source",
-        "video",
-        "plate",
-        "plt",
-        "plates",
-        "DELIVERY"
+        "RED_Camera_File_Task"
       ]
     },
     {
       "Video/Footage/Sony": [
-        "footage",
-        "source",
-        "video",
-        "plate",
-        "plt",
-        "plates",
-        "DELIVERY"
+        "Sony_Camera_File_Task"
       ]
     },
     {
       "Video/Footage/Canon": [
-        "footage",
-        "source",
-        "video",
-        "plate",
-        "plt",
-        "plates",
-        "DELIVERY"
+        "Canon_Camera_File_Task"
       ]
     },
     {
       "Video/Footage/DJI": [
-        "footage",
-        "source",
-        "video",
-        "plate",
-        "plt",
-        "plates",
-        "DELIVERY"
+        "DJI_Camera_File_Task"
       ]
     }
   ],

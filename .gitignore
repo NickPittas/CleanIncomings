@@ -60,4 +60,7 @@ temp/
 
 # Progress files
 python/_progress/
-*.progress 
+*.progress
+
+# Large libraries/dependencies
+libvlc/

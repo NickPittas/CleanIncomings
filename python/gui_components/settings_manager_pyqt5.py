@@ -37,7 +37,8 @@ class SettingsManager:
                 "color_theme": "blue",
                 "scan_threads": 8,  # Balanced for 10GbE scanning
                 "copy_threads": 16,  # Balanced for 10GbE copying - good performance without overload
-                "ffplay_path": ""  # Path to ffplay executable
+                "ffplay_path": "",  # Path to ffplay executable
+                "scan_on_startup": False  # Added scan_on_startup to ui_state defaults
             },
             "performance": {
                 "enable_multithreading": True,
@@ -99,10 +100,19 @@ class SettingsManager:
             # Update UI state section
             ui_state = current_settings.setdefault("ui_state", {})
             
-            # Save window geometry (PyQt5)
-            geometry = self.app.geometry()
-            ui_state["window_geometry"] = f"{geometry.width()}x{geometry.height()}"
-            ui_state["window_position"] = f"+{geometry.x()}+{geometry.y()}"
+            # Save window geometry using the new method from app_gui_pyqt5
+            if hasattr(self.app, 'get_geometry_as_string'):
+                ui_state["window_geometry_full"] = self.app.get_geometry_as_string()
+                # Clean up old keys if they exist
+                ui_state.pop("window_geometry", None)
+                ui_state.pop("window_position", None)
+            else:
+                # Fallback or log warning if method is not found (should not happen with correct app instance)
+                self.app.logger.warning("save_current_state: self.app.get_geometry_as_string not found.")
+                # Attempt to save using old method as a very basic fallback
+                geometry = self.app.geometry()
+                ui_state["window_geometry"] = f"{geometry.width()}x{geometry.height()}"
+                ui_state["window_position"] = f"+{geometry.x()}+{geometry.y()}"
             
             # Save folder selections
             ui_state["source_folder"] = self.app.selected_source_folder.get()
@@ -134,29 +144,32 @@ class SettingsManager:
 
     def restore_ui_state(self, ui_state: Dict[str, Any]):
         """Restore UI state to the application (PyQt5 compatible)."""
-        try:            # Restore window geometry and position (PyQt5)
-            if ui_state.get("window_geometry"):
-                geometry = ui_state["window_geometry"]
-                try:
-                    # Parse geometry string: "WIDTHxHEIGHT" 
-                    width, height = map(int, geometry.split('x'))
-                    
-                    # Set size
-                    self.app.resize(width, height)
-                    
-                    # Set position if available
-                    if ui_state.get("window_position"):
-                        position = ui_state["window_position"]
-                        # Parse position: "+X+Y"
-                        parts = position.replace('+', ' +').split()
-                        if len(parts) >= 2:
-                            x = int(parts[0])
-                            y = int(parts[1])
-                            self.app.move(x, y)
-                except ValueError as e:
-                    print(f"Invalid geometry string: {geometry} - {e}")
-                except Exception as e:
-                    print(f"Error parsing geometry: {e}")
+        try:
+            # Restore window geometry and position using the new method from app_gui_pyqt5
+            if ui_state.get("window_geometry_full") and hasattr(self.app, 'set_geometry_from_string'):
+                self.app.set_geometry_from_string(ui_state.get("window_geometry_full"))
+            elif ui_state.get("window_geometry"): # Fallback to old method if new key not present
+                self.app.logger.info("Restoring geometry using old keys (window_geometry, window_position).")
+                geometry_str = ui_state["window_geometry"]
+                position_str = ui_state.get("window_position")
+                full_geom_str = f"{geometry_str}{position_str if position_str else '+0+0'}" # Construct full string
+                if hasattr(self.app, 'set_geometry_from_string'):
+                    self.app.set_geometry_from_string(full_geom_str)
+                else: # Absolute fallback if set_geometry_from_string is also missing
+                    self.app.logger.warning("restore_ui_state: self.app.set_geometry_from_string not found, attempting direct resize/move.")
+                    try:
+                        width, height = map(int, geometry_str.split('x'))
+                        self.app.resize(width, height)
+                        if position_str:
+                            parts = position_str.replace('+', ' ').split()
+                            if len(parts) >= 2:
+                                x_pos = int(parts[0])
+                                y_pos = int(parts[1])
+                                self.app.move(x_pos, y_pos)
+                    except Exception as e_fallback:
+                        self.app.logger.error(f"Error in fallback geometry restoration: {e_fallback}")
+            else:
+                self.app.logger.info("No window_geometry_full or window_geometry found in ui_state for restoration.")
 
             # Restore folder selections
             if ui_state.get("source_folder"):
@@ -167,7 +180,9 @@ class SettingsManager:
             if ui_state.get("destination_folder"):
                 self.app.selected_destination_folder.set(ui_state["destination_folder"])
                 if hasattr(self.app, 'dest_folder_entry'):
-                    self.app.dest_folder_entry.setText(ui_state["destination_folder"])            # Restore profile selection
+                    self.app.dest_folder_entry.setText(ui_state["destination_folder"])
+            
+            # Restore profile selection
             if ui_state.get("selected_profile") and hasattr(self.app, 'profile_combobox'):
                 try:
                     # For PyQt5, use setCurrentText instead of set

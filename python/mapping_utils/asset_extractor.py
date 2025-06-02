@@ -29,7 +29,7 @@ def extract_asset_simple(filename: str, asset_patterns: List[str]) -> Optional[s
             match = compiled_pattern.search(filename)
             if match:
                 matched_value = match.group(0)
-                print(f"[ASSET_EXTRACTOR MATCH] Regex Pattern: '{pattern_str}', File: '{filename}', Asset: '{pattern_str}', Matched: '{matched_value}'", file=sys.stderr, flush=True)
+                # print(f"[ASSET_EXTRACTOR MATCH] Regex Pattern: '{pattern_str}', File: '{filename}', Asset: '{pattern_str}', Matched: '{matched_value}'", file=sys.stderr, flush=True)  # (Silenced for normal use. Re-enable for troubleshooting.)
                 return pattern_str # Return the original pattern string
             # else:
             #     print(f"[ASSET_EXTRACTOR DEBUG] Regex Pattern: '{pattern_str}' - NO MATCH on '{filename}'", file=sys.stderr, flush=True)

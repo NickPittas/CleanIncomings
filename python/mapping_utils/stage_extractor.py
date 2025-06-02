@@ -29,7 +29,7 @@ def extract_stage_simple(filename: str, stage_patterns: List[str]) -> Optional[s
             match = compiled_pattern.search(filename)
             if match:
                 matched_value = match.group(0)
-                print(f"[STAGE_EXTRACTOR MATCH] Regex Pattern: '{pattern_str}', File: '{filename}', Stage: '{pattern_str}', Matched: '{matched_value}'", file=sys.stderr, flush=True)
+                # print(f"[STAGE_EXTRACTOR MATCH] Regex Pattern: '{pattern_str}', File: '{filename}', Stage: '{pattern_str}', Matched: '{matched_value}'", file=sys.stderr, flush=True)  # (Silenced for normal use. Re-enable for troubleshooting.)
                 return pattern_str # Return the original pattern string
             # else:
             #     print(f"[STAGE_EXTRACTOR DEBUG] Regex Pattern: '{pattern_str}' - NO MATCH on '{filename}'", file=sys.stderr, flush=True)
@@ -37,7 +37,7 @@ def extract_stage_simple(filename: str, stage_patterns: List[str]) -> Optional[s
             # print(f"[STAGE_EXTRACTOR INFO] Pattern '{pattern_str}' is not valid regex. Trying as simple string.", file=sys.stderr, flush=True)
             # print(f"[STAGE_EXTRACTOR DEBUG] Trying pattern (simple string): '{pattern_str}' on '{filename}'", file=sys.stderr, flush=True)
             if pattern_str.lower() in filename.lower():
-                print(f"[STAGE_EXTRACTOR MATCH] Simple String: '{pattern_str}', File: '{filename}', Stage: '{pattern_str}'", file=sys.stderr, flush=True)
+                # print(f"[STAGE_EXTRACTOR MATCH] Simple String: '{pattern_str}', File: '{filename}', Stage: '{pattern_str}'", file=sys.stderr, flush=True)  # (Silenced for normal use. Re-enable for troubleshooting.)
                 return pattern_str # Return the original pattern string
             # else:
             #     print(f"[STAGE_EXTRACTOR DEBUG] Simple String Pattern: '{pattern_str}' - NO MATCH on '{filename}'", file=sys.stderr, flush=True)

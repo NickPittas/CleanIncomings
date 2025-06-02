@@ -26,7 +26,7 @@ def extract_resolution_simple(filename: str, source_path: str, resolution_patter
             compiled_pattern = re.compile(pattern_str, re.IGNORECASE)
             match = compiled_pattern.search(filename) # Search on original filename
             if match:
-                print(f"[RESOLUTION_EXTRACTOR MATCH] Regex Pattern: '{pattern_str}', File: '{filename}', Matched Group: '{match.group(0)}'", file=sys.stderr, flush=True)
+                # print(f"[RESOLUTION_EXTRACTOR MATCH] Regex Pattern: '{pattern_str}', File: '{filename}', Matched Group: '{match.group(0)}'", file=sys.stderr, flush=True)  # (Silenced for normal use. Re-enable for troubleshooting.)
                 return match.group(0) # Return the actual matched substring
             # else:
             #     # This 'else' is for when regex compilation succeeded but no match was found.
@@ -39,7 +39,7 @@ def extract_resolution_simple(filename: str, source_path: str, resolution_patter
             # Fallback to simple string containment for this pattern.
             # print(f"[RESOLUTION_EXTRACTOR INFO] Pattern '{pattern_str}' is not valid regex. Trying as simple string.", file=sys.stderr, flush=True)
             if pattern_str.lower() in filename.lower():
-                print(f"[RESOLUTION_EXTRACTOR MATCH] Simple String: '{pattern_str}', File: '{filename}'", file=sys.stderr, flush=True)
+                # print(f"[RESOLUTION_EXTRACTOR MATCH] Simple String: '{pattern_str}', File: '{filename}'", file=sys.stderr, flush=True)  # (Silenced for normal use. Re-enable for troubleshooting.)
                 return pattern_str
             # else: # No explicit 'else' needed here for unmatched simple string, loop continues
 

@@ -90,25 +90,38 @@ class FileTransfer:
             print(f"[FILETRANSFER_DEBUG] Source file: {src_filename}")
             print(f"[FILETRANSFER_DEBUG] Dest dir: {dst_dir}")
             
-            # Use robocopy with aggressive settings for 10GbE
-            # /J = Unbuffered I/O (faster for large files)
-            # /MT:32 = Multi-threaded with 32 threads for maximum 10GbE utilization
-            # /NFL /NDL = No file/directory listing (faster)
-            # /NP = No progress (we handle our own)
-            # /R:0 = No retries (fail fast)
-            # /W:1 = Wait 1 second between retries
+            # Get batch copy threads from settings
+            try:
+                from python.gui_components.settings_manager_pyqt5 import SettingsManager
+                import inspect
+                app_instance = None
+                for frame_info in inspect.stack():
+                    local_app = frame_info.frame.f_locals.get('self', None)
+                    if local_app and hasattr(local_app, 'settings_manager'):
+                        app_instance = local_app
+                        break
+                if app_instance and hasattr(app_instance, 'settings_manager'):
+                    settings_manager = app_instance.settings_manager
+                    batch_copy_threads = int(settings_manager.get_setting('performance', 'batch_copy_threads', 32))
+                else:
+                    import os
+                    batch_copy_threads = int(os.environ.get('BATCH_COPY_THREADS', 32))
+            except Exception:
+                batch_copy_threads = 32
+            
+            # Robocopy command for MAXIMUM speed (restored critical performance flags)
             cmd = [
                 'robocopy',
                 src_dir,
                 dst_dir,
                 src_filename,
                 '/J',           # Unbuffered I/O for maximum speed
-                '/MT:32',       # 32 threads for 10GbE
-                '/NFL',         # No file listing
+                f'/MT:{batch_copy_threads}',  # User-configurable threads for Robocopy
+                '/NFL',         # No file listing (CRITICAL for speed)
                 '/NDL',         # No directory listing  
-                '/NP',          # No progress meter
-                '/R:0',         # No retries
-                '/W:1',         # 1 second wait
+                '/NP',          # No progress meter (CRITICAL for speed)
+                '/R:0',         # No retries on failed copies
+                '/W:1',         # Wait 1 second between retries
                 '/BYTES',       # Show file sizes in bytes (for consistent output parsing)
                 '/IS'           # Include Same files (OVERWRITE existing files)
             ]
@@ -463,7 +476,7 @@ def move_item(source_path: str, destination_path: str,
             }
             status_callback({'type': f'file_operation_{type_suffix}', 'data': data})
 
-    print(f"[MOVE_ITEM_DEBUG] Starting move: '{source_path}' -> '{destination_path}'")
+    # print(f"[MOVE_ITEM_DEBUG] Starting move: '{source_path}' -> '{destination_path}'")
     _send_status('progress', 'progress', f'Preparing to move {base_name}...', percent=0, speed_mbps=0, eta_str="Calculating...")
 
     if not os.path.exists(source_path):
@@ -489,7 +502,7 @@ def move_item(source_path: str, destination_path: str,
     source_drive = os.path.splitdrive(os.path.abspath(source_path))[0].upper()
     dest_drive = os.path.splitdrive(os.path.abspath(destination_path))[0].upper()
     
-    print(f"[MOVE_ITEM_DEBUG] Source drive: '{source_drive}', Dest drive: '{dest_drive}'")
+    # print(f"[MOVE_ITEM_DEBUG] Source drive: '{source_drive}', Dest drive: '{dest_drive}'")
     
     if source_drive == dest_drive and source_drive:
         # 🏎️ SAME DRIVE = INSTANT FILESYSTEM MOVE (like Windows Explorer!)
@@ -638,12 +651,12 @@ def copy_sequence_batch(source_dir: str, destination_dir: str, file_pattern: str
         total_files = len(matching_files)
     else:
         total_files = file_count
-        print(f"[COPY_BATCH_DEBUG] Using provided file count: {total_files}")
+        # print(f"[COPY_BATCH_DEBUG] Using provided file count: {total_files}")
     
     # Don't calculate total_size unless absolutely necessary
     if total_size is None or total_size == 0:
         total_size_bytes = 0  # Will be calculated during transfer
-        print(f"[COPY_BATCH_DEBUG] Skipping size calculation - will get real-time size during copy")
+        # print(f"[COPY_BATCH_DEBUG] Skipping size calculation - will get real-time size during copy")
     else:
         total_size_bytes = total_size
 
@@ -658,17 +671,17 @@ def copy_sequence_batch(source_dir: str, destination_dir: str, file_pattern: str
             }
             status_callback({'type': f'sequence_operation_{type_suffix}', 'data': data})
 
-    print(f"[SEQUENCE_COPY_DEBUG] Starting batch copy...")
-    print(f"[SEQUENCE_COPY_DEBUG] Source dir: {source_dir}")
-    print(f"[SEQUENCE_COPY_DEBUG] Dest dir: {destination_dir}")
-    print(f"[SEQUENCE_COPY_DEBUG] Pattern: {file_pattern}")
+    # print(f"[SEQUENCE_COPY_DEBUG] Starting batch copy...")
+    # print(f"[SEQUENCE_COPY_DEBUG] Source dir: {source_dir}")
+    # print(f"[SEQUENCE_COPY_DEBUG] Dest dir: {destination_dir}")
+    # print(f"[SEQUENCE_COPY_DEBUG] Pattern: {file_pattern}")
     
     _send_status('progress', 'progress', f'Preparing to copy sequence batch: {file_pattern}', percent=0)
 
     # Validate source directory
     if not os.path.exists(source_dir):
         msg = f"Source directory not found: {source_dir}"
-        print(f"[SEQUENCE_COPY_ERROR] {msg}")
+        # print(f"[SEQUENCE_COPY_ERROR] {msg}")
         logger.error(msg)
         _send_status('error', 'error', msg)
         return False, msg
@@ -677,7 +690,7 @@ def copy_sequence_batch(source_dir: str, destination_dir: str, file_pattern: str
     dir_created, error_msg_dir = create_destination_directory_if_not_exists(destination_dir, is_file_path=False)
     if not dir_created:
         final_error_msg = error_msg_dir if error_msg_dir else f"Failed to create destination directory: {destination_dir}"
-        print(f"[SEQUENCE_COPY_ERROR] {final_error_msg}")
+        # print(f"[SEQUENCE_COPY_ERROR] {final_error_msg}")
         logger.error(final_error_msg)
         _send_status('error', 'error', final_error_msg)
         return False, final_error_msg
@@ -687,21 +700,21 @@ def copy_sequence_batch(source_dir: str, destination_dir: str, file_pattern: str
         if file_count is not None and total_size is not None:
             total_files = file_count
             total_size_bytes = total_size
-            print(f"[SEQUENCE_COPY_DEBUG] Using pre-calculated values: {total_files} files, {total_size_bytes} bytes")
+            # print(f"[SEQUENCE_COPY_DEBUG] Using pre-calculated values: {total_files} files, {total_size_bytes} bytes")
         else:
-            print(f"[SEQUENCE_COPY_DEBUG] Scanning files (pre-calculated values not provided)...")
+            # print(f"[SEQUENCE_COPY_DEBUG] Scanning files (pre-calculated values not provided)...")
             # Count files to estimate progress (fallback)
             import glob
             source_files = glob.glob(os.path.join(source_dir, file_pattern))
             total_files = len(source_files)
             total_size_bytes = sum(os.path.getsize(f) for f in source_files if os.path.isfile(f))
         
-        print(f"[SEQUENCE_COPY_DEBUG] Processing {total_files} files")
-        print(f"[SEQUENCE_COPY_DEBUG] Total size: {total_size_bytes} bytes ({total_size_bytes / (1024*1024):.2f} MB)")
+        # print(f"[SEQUENCE_COPY_DEBUG] Processing {total_files} files")
+        # print(f"[SEQUENCE_COPY_DEBUG] Total size: {total_size_bytes} bytes ({total_size_bytes / (1024*1024):.2f} MB)")
         
         if total_files == 0:
             msg = f"No files found matching pattern: {file_pattern}"
-            print(f"[SEQUENCE_COPY_WARNING] {msg}")
+            # print(f"[SEQUENCE_COPY_WARNING] {msg}")
             _send_status('warning', 'warning', msg)
             return True, msg  # Not an error, just nothing to copy
 
@@ -709,26 +722,12 @@ def copy_sequence_batch(source_dir: str, destination_dir: str, file_pattern: str
                     total_files=total_files, total_size=total_size_bytes, percent=5)
 
         # Use robocopy with ultra-fast settings and background progress monitoring
-        print(f"[SEQUENCE_COPY_DEBUG] Using robocopy with MAXIMUM 10GbE speed + background progress monitoring")
+        # print(f"[SEQUENCE_COPY_DEBUG] Using robocopy with MAXIMUM 10GbE speed + background progress monitoring")
         
         # Robocopy command for MAXIMUM speed (restored critical performance flags)
-        cmd = [
-            'robocopy',
-            source_dir,
-            destination_dir,
-            file_pattern,
-            '/J',           # Unbuffered I/O for maximum speed
-            '/MT:32',       # 32 threads for 10GbE
-            '/NFL',         # No file listing (CRITICAL for speed)
-            '/NDL',         # No directory listing  
-            '/NP',          # No progress meter (CRITICAL for speed)
-            '/R:0',         # No retries on failed copies
-            '/W:1',         # Wait 1 second between retries
-            '/BYTES',       # Show file sizes in bytes (for consistent output parsing)
-            '/IS'           # Include Same files (OVERWRITE existing files)
-        ]
+        # (cmd is now built above with user-configurable /MT)
         
-        print(f"[SEQUENCE_COPY_DEBUG] Executing: {' '.join(cmd)}")
+        # print(f"[SEQUENCE_COPY_DEBUG] Executing: {' '.join(cmd)}")
         
         start_time = time.time()
         
@@ -745,8 +744,26 @@ def copy_sequence_batch(source_dir: str, destination_dir: str, file_pattern: str
         import glob
         
         def monitor_progress():
-            """Monitor progress by checking destination directory file count"""
-            print(f"[PROGRESS_MONITOR_DEBUG] Starting background progress monitoring thread")
+            """Monitor progress by checking destination directory file count, with throttled UI updates."""
+            # Throttle interval in seconds
+            try:
+                from python.gui_components.settings_manager_pyqt5 import SettingsManager
+                import inspect
+                # Try to get app instance from caller if possible
+                app_instance = None
+                for frame_info in inspect.stack():
+                    local_app = frame_info.frame.f_locals.get('self', None)
+                    if local_app and hasattr(local_app, 'settings_manager'):
+                        app_instance = local_app
+                        break
+                if app_instance and hasattr(app_instance, 'settings_manager'):
+                    settings_manager = app_instance.settings_manager
+                    THROTTLE_SECONDS = float(settings_manager.get_setting('performance', 'progress_update_interval', 0.5))
+                else:
+                    import os
+                    THROTTLE_SECONDS = float(os.environ.get('PROGRESS_UPDATE_INTERVAL', 0.5))
+            except Exception:
+                THROTTLE_SECONDS = 0.5
             last_update_time = 0
             last_file_count = 0
             
@@ -754,54 +771,49 @@ def copy_sequence_batch(source_dir: str, destination_dir: str, file_pattern: str
                 try:
                     current_time = time.time()
                     
-                    # Check progress every 1 second (don't spam)
-                    if current_time - last_update_time >= 1.0:
-                        # Count files in destination directory
-                        dest_pattern = os.path.join(destination_dir, file_pattern)
-                        print(f"[PROGRESS_MONITOR_DEBUG] Checking pattern: {dest_pattern}")
-                        
-                        dest_files = glob.glob(dest_pattern)
-                        files_copied = len(dest_files)
-                        
-                        print(f"[PROGRESS_MONITOR_DEBUG] Found {files_copied} files in destination (was {last_file_count})")
-                        
-                        if files_copied > last_file_count:  # Progress detected
-                            # Calculate progress
-                            progress_percent = min(95, (files_copied / total_files) * 100)
-                            elapsed = current_time - start_time
-                            
-                            if elapsed > 0.1:
-                                # Estimate speed based on files copied so far
-                                estimated_bytes_copied = (files_copied / total_files) * total_size_bytes
-                                estimated_speed = estimated_bytes_copied / elapsed
-                                speed_mbps = estimated_speed / (1024 * 1024)
-                                speed_gbps = estimated_speed * 8 / 1_000_000_000
-                                
-                                # Calculate ETA
-                                remaining_files = total_files - files_copied
-                                if files_copied > 0:
-                                    files_per_second = files_copied / elapsed
-                                    eta_seconds = remaining_files / files_per_second if files_per_second > 0 else 0
-                                    eta_str = time.strftime("%H:%M:%S", time.gmtime(eta_seconds)) if eta_seconds < 86400 else f"{eta_seconds/3600:.1f} hrs"
-                                else:
-                                    eta_str = "Calculating..."
-                                
-                                print(f"[PROGRESS_MONITOR_DEBUG] Sending progress update: {files_copied}/{total_files} ({progress_percent:.1f}%) at {speed_mbps:.1f} MB/s")
-                                
-                                # Send progress update
-                                _send_status('progress', 'progress', 
-                                           f'Ultra-fast copy: {files_copied}/{total_files} ({progress_percent:.1f}%)', 
-                                           percent=progress_percent,
-                                           files_copied=files_copied,
-                                           total_files=total_files,
-                                           speed_mbps=round(speed_mbps, 2),
-                                           speed_gbps=round(speed_gbps, 3),
-                                           eta_str=eta_str)
-                                
-                                last_file_count = files_copied
+                    # Count files in destination directory
+                    dest_pattern = os.path.join(destination_dir, file_pattern)
+                    dest_files = glob.glob(dest_pattern)
+                    files_copied = len(dest_files)
+                    
+                    # Only send progress if enough time has passed or if completed
+                    should_emit = False
+                    progress_percent = min(95, (files_copied / total_files) * 100)
+                    if files_copied > last_file_count:
+                        # Only emit if at least THROTTLE_SECONDS since last update, or if done
+                        if (current_time - last_update_time >= THROTTLE_SECONDS) or (files_copied == total_files):
+                            should_emit = True
+                    if should_emit:
+                        elapsed = current_time - start_time
+                        if elapsed > 0.1:
+                            # Estimate speed based on files copied so far
+                            estimated_bytes_copied = (files_copied / total_files) * total_size_bytes
+                            estimated_speed = estimated_bytes_copied / elapsed
+                            speed_mbps = estimated_speed / (1024 * 1024)
+                            speed_gbps = estimated_speed * 8 / 1_000_000_000
+                            # Calculate ETA
+                            remaining_files = total_files - files_copied
+                            if files_copied > 0:
+                                files_per_second = files_copied / elapsed
+                                eta_seconds = remaining_files / files_per_second if files_per_second > 0 else 0
+                                eta_str = time.strftime("%H:%M:%S", time.gmtime(eta_seconds)) if eta_seconds < 86400 else f"{eta_seconds/3600:.1f} hrs"
+                            else:
+                                eta_str = "Calculating..."
+                            # Send progress update (throttled)
+                            _send_status('progress', 'progress', 
+                                       f'Ultra-fast copy: {files_copied}/{total_files} ({progress_percent:.1f}%)', 
+                                       percent=progress_percent,
+                                       files_copied=files_copied,
+                                       total_files=total_files,
+                                       speed_mbps=round(speed_mbps, 2),
+                                       speed_gbps=round(speed_gbps, 3),
+                                       eta_str=eta_str)
+                            last_update_time = current_time
+                            last_file_count = files_copied
+
                         elif files_copied == 0 and current_time - start_time > 2.0:
                             # No files found yet after 2 seconds, send a "starting" update
-                            print(f"[PROGRESS_MONITOR_DEBUG] No files detected yet after {current_time - start_time:.1f}s")
+                            # print(f"[PROGRESS_MONITOR_DEBUG] No files detected yet after {current_time - start_time:.1f}s")
                             _send_status('progress', 'progress', 
                                        f'Robocopy starting... {total_files} files queued', 
                                        percent=1,
@@ -821,10 +833,10 @@ def copy_sequence_batch(source_dir: str, destination_dir: str, file_pattern: str
                     traceback.print_exc()
                     break
             
-            print(f"[PROGRESS_MONITOR_DEBUG] Background monitoring thread finished")
+            # print(f"[PROGRESS_MONITOR_DEBUG] Background monitoring thread finished")
         
         # Start background progress monitoring thread
-        print(f"[SEQUENCE_COPY_DEBUG] Starting background progress monitoring thread...")
+        # print(f"[SEQUENCE_COPY_DEBUG] Starting background progress monitoring thread...")
         monitor_thread = threading.Thread(target=monitor_progress, daemon=True)
         monitor_thread.start()
         
@@ -846,17 +858,17 @@ def copy_sequence_batch(source_dir: str, destination_dir: str, file_pattern: str
         speed_mbps = (total_size_bytes / (1024 * 1024)) / duration if duration > 0 else 0
         speed_gbps = speed_mbps / 1000
         
-        print(f"[SEQUENCE_COPY_DEBUG] Batch robocopy completed in {duration:.2f}s")
-        print(f"[SEQUENCE_COPY_DEBUG] Speed: {speed_mbps:.2f} MB/s ({speed_gbps:.2f} Gbps)")
-        print(f"[SEQUENCE_COPY_DEBUG] Files copied: {total_files}")
-        print(f"[SEQUENCE_COPY_DEBUG] Return code: {process.returncode}")
+        # print(f"[SEQUENCE_COPY_DEBUG] Batch robocopy completed in {duration:.2f}s")
+        # print(f"[SEQUENCE_COPY_DEBUG] Speed: {speed_mbps:.2f} MB/s ({speed_gbps:.2f} Gbps)")
+        # print(f"[SEQUENCE_COPY_DEBUG] Files copied: {total_files}")
+        # print(f"[SEQUENCE_COPY_DEBUG] Return code: {process.returncode}")
         
         # Parse robocopy output to detect skipped vs copied files
         if isinstance(stdout, bytes):
             stdout_str = stdout.decode('utf-8', errors='ignore')
         else:
             stdout_str = stdout  # Already a string
-        print(f"[SEQUENCE_COPY_DEBUG] Final stdout:\n{stdout_str}")
+        # print(f"[SEQUENCE_COPY_DEBUG] Final stdout:\n{stdout_str}")
         
         # Parse robocopy statistics from output
         files_copied = 0
@@ -946,7 +958,7 @@ def copy_sequence_batch(source_dir: str, destination_dir: str, file_pattern: str
             if files_failed > 0:
                 error_message += f" - {files_failed} files failed to copy"
             
-            print(f"[SEQUENCE_COPY_DEBUG] Error: {error_message}")
+            # print(f"[SEQUENCE_COPY_DEBUG] Error: {error_message}")
             
             if status_callback:
                 status_callback({
@@ -964,7 +976,7 @@ def copy_sequence_batch(source_dir: str, destination_dir: str, file_pattern: str
             return (False, error_message)
             
     except Exception as e:
-        print(f"[SEQUENCE_COPY_ERROR] Batch copy failed: {e}")
+        # print(f"[SEQUENCE_COPY_ERROR] Batch copy failed: {e}")
         return _xcopy_sequence_fallback(source_dir, destination_dir, file_pattern, status_callback, transfer_id, total_files, total_size_bytes)
 
 def _xcopy_sequence_fallback(source_dir: str, destination_dir: str, file_pattern: str,
@@ -979,7 +991,7 @@ def _xcopy_sequence_fallback(source_dir: str, destination_dir: str, file_pattern
         source_pattern = os.path.join(source_dir, file_pattern)
         cmd = ['xcopy', f'"{source_pattern}"', f'"{destination_dir}\\"', '/Y', '/H']
         
-        print(f"[SEQUENCE_COPY_DEBUG] Executing xcopy: {' '.join(cmd)}")
+        # print(f"[SEQUENCE_COPY_DEBUG] Executing xcopy: {' '.join(cmd)}")
         
         start_time = time.time()
         result = subprocess.run(cmd, capture_output=True, text=True, check=False, shell=True)
@@ -990,13 +1002,13 @@ def _xcopy_sequence_fallback(source_dir: str, destination_dir: str, file_pattern
         speed_mbps = speed_bps / (1024 * 1024)
         speed_gbps = speed_bps * 8 / 1_000_000_000
         
-        print(f"[SEQUENCE_COPY_DEBUG] Batch xcopy completed in {elapsed_time:.2f}s")
-        print(f"[SEQUENCE_COPY_DEBUG] Speed: {speed_mbps:.2f} MB/s ({speed_gbps:.2f} Gbps)")
-        print(f"[SEQUENCE_COPY_DEBUG] Return code: {result.returncode}")
+        # print(f"[SEQUENCE_COPY_DEBUG] Batch xcopy completed in {elapsed_time:.2f}s")
+        # print(f"[SEQUENCE_COPY_DEBUG] Speed: {speed_mbps:.2f} MB/s ({speed_gbps:.2f} Gbps)")
+        # print(f"[SEQUENCE_COPY_DEBUG] Return code: {result.returncode}")
         
         if result.returncode == 0:
             msg = f"✅ XCOPY BATCH SUCCESS! {total_files} files at {speed_mbps:.2f} MB/s ({speed_gbps:.2f} Gbps)"
-            print(f"[SEQUENCE_COPY_DEBUG] {msg}")
+            # print(f"[SEQUENCE_COPY_DEBUG] {msg}")
             
             def _send_status(type_suffix: str, status_str: str, message: str, **kwargs):
                 if status_callback:
@@ -1017,12 +1029,12 @@ def _xcopy_sequence_fallback(source_dir: str, destination_dir: str, file_pattern
             return True, msg
         else:
             msg = f"Xcopy batch failed with return code {result.returncode}"
-            print(f"[SEQUENCE_COPY_ERROR] {msg}")
+            # print(f"[SEQUENCE_COPY_ERROR] {msg}")
             return False, msg
             
     except Exception as e:
         msg = f"Batch copy fallback failed: {e}"
-        print(f"[SEQUENCE_COPY_ERROR] {msg}")
+        # print(f"[SEQUENCE_COPY_ERROR] {msg}")
         return False, msg
 
 def move_sequence_batch(source_dir: str, destination_dir: str, file_pattern: str,
@@ -1053,12 +1065,12 @@ def move_sequence_batch(source_dir: str, destination_dir: str, file_pattern: str
         total_files = len(matching_files)
     else:
         total_files = file_count
-        print(f"[MOVE_BATCH_DEBUG] Using provided file count: {total_files}")
+        # print(f"[MOVE_BATCH_DEBUG] Using provided file count: {total_files}")
     
     # Don't calculate total_size unless absolutely necessary
     if total_size is None or total_size == 0:
         total_size_bytes = 0  # Will be calculated during transfer
-        print(f"[MOVE_BATCH_DEBUG] Skipping size calculation - will get real-time size during move")
+        # print(f"[MOVE_BATCH_DEBUG] Skipping size calculation - will get real-time size during move")
     else:
         total_size_bytes = total_size
 
@@ -1073,17 +1085,17 @@ def move_sequence_batch(source_dir: str, destination_dir: str, file_pattern: str
             }
             status_callback({'type': f'sequence_operation_{type_suffix}', 'data': data})
 
-    print(f"[SEQUENCE_MOVE_DEBUG] Starting batch move...")
-    print(f"[SEQUENCE_MOVE_DEBUG] Source dir: {source_dir}")
-    print(f"[SEQUENCE_MOVE_DEBUG] Dest dir: {destination_dir}")
-    print(f"[SEQUENCE_MOVE_DEBUG] Pattern: {file_pattern}")
+    # print(f"[SEQUENCE_MOVE_DEBUG] Starting batch move...")
+    # print(f"[SEQUENCE_MOVE_DEBUG] Source dir: {source_dir}")
+    # print(f"[SEQUENCE_MOVE_DEBUG] Dest dir: {destination_dir}")
+    # print(f"[SEQUENCE_MOVE_DEBUG] Pattern: {file_pattern}")
     
     _send_status('progress', 'progress', f'Preparing to move sequence batch: {file_pattern}', percent=0)
 
     # Validate source directory
     if not os.path.exists(source_dir):
         msg = f"Source directory not found: {source_dir}"
-        print(f"[SEQUENCE_MOVE_ERROR] {msg}")
+        # print(f"[SEQUENCE_MOVE_ERROR] {msg}")
         logger.error(msg)
         _send_status('error', 'error', msg)
         return False, msg
@@ -1092,7 +1104,7 @@ def move_sequence_batch(source_dir: str, destination_dir: str, file_pattern: str
     dir_created, error_msg_dir = create_destination_directory_if_not_exists(destination_dir, is_file_path=False)
     if not dir_created:
         final_error_msg = error_msg_dir if error_msg_dir else f"Failed to create destination directory: {destination_dir}"
-        print(f"[SEQUENCE_MOVE_ERROR] {final_error_msg}")
+        # print(f"[SEQUENCE_MOVE_ERROR] {final_error_msg}")
         logger.error(final_error_msg)
         _send_status('error', 'error', final_error_msg)
         return False, final_error_msg
@@ -1102,24 +1114,24 @@ def move_sequence_batch(source_dir: str, destination_dir: str, file_pattern: str
         if file_count is not None and total_size is not None:
             total_files = file_count
             total_size_bytes = total_size
-            print(f"[SEQUENCE_MOVE_DEBUG] Using pre-calculated values: {total_files} files, {total_size_bytes} bytes")
+            # print(f"[SEQUENCE_MOVE_DEBUG] Using pre-calculated values: {total_files} files, {total_size_bytes} bytes")
             
             # For instant moves, we still need the file list, but only if same drive
             source_files = None  # We'll get this only if needed for same-drive moves
         else:
-            print(f"[SEQUENCE_MOVE_DEBUG] Scanning files (pre-calculated values not provided)...")
+            # print(f"[SEQUENCE_MOVE_DEBUG] Scanning files (pre-calculated values not provided)...")
             # Count files to estimate progress (fallback)
             import glob
             source_files = glob.glob(os.path.join(source_dir, file_pattern))
             total_files = len(source_files)
             total_size_bytes = sum(os.path.getsize(f) for f in source_files if os.path.isfile(f))
         
-        print(f"[SEQUENCE_MOVE_DEBUG] Processing {total_files} files")
-        print(f"[SEQUENCE_MOVE_DEBUG] Total size: {total_size_bytes} bytes ({total_size_bytes / (1024*1024):.2f} MB)")
+        # print(f"[SEQUENCE_MOVE_DEBUG] Processing {total_files} files")
+        # print(f"[SEQUENCE_MOVE_DEBUG] Total size: {total_size_bytes} bytes ({total_size_bytes / (1024*1024):.2f} MB)")
         
         if total_files == 0:
             msg = f"No files found matching pattern: {file_pattern}"
-            print(f"[SEQUENCE_MOVE_WARNING] {msg}")
+            # print(f"[SEQUENCE_MOVE_WARNING] {msg}")
             _send_status('warning', 'warning', msg)
             return True, msg  # Not an error, just nothing to move
 
@@ -1127,7 +1139,7 @@ def move_sequence_batch(source_dir: str, destination_dir: str, file_pattern: str
         source_drive = os.path.splitdrive(os.path.abspath(source_dir))[0].upper()
         dest_drive = os.path.splitdrive(os.path.abspath(destination_dir))[0].upper()
         
-        print(f"[SEQUENCE_MOVE_DEBUG] Source drive: '{source_drive}', Dest drive: '{dest_drive}'")
+        # print(f"[SEQUENCE_MOVE_DEBUG] Source drive: '{source_drive}', Dest drive: '{dest_drive}'")
         
         if source_drive == dest_drive and source_drive:
             # 🏎️ SAME DRIVE = INSTANT FILESYSTEM MOVE (like Windows Explorer!)
@@ -1150,7 +1162,7 @@ def move_sequence_batch(source_dir: str, destination_dir: str, file_pattern: str
             
     except Exception as e:
         msg = f"Batch move failed: {e}"
-        print(f"[SEQUENCE_MOVE_ERROR] {msg}")
+        # print(f"[SEQUENCE_MOVE_ERROR] {msg}")
         return False, msg
 
 def _instant_filesystem_move(source_files: list, destination_dir: str, total_files: int, 
@@ -1161,7 +1173,7 @@ def _instant_filesystem_move(source_files: list, destination_dir: str, total_fil
     This is nearly instantaneous regardless of file size.
     """
     try:
-        print(f"[INSTANT_MOVE_DEBUG] Starting instant filesystem move of {total_files} files...")
+        # print(f"[INSTANT_MOVE_DEBUG] Starting instant filesystem move of {total_files} files...")
         
         _send_status('progress', 'progress', f'Instant move: {total_files} files...', 
                     total_files=total_files, total_size=total_size_bytes, percent=10)
@@ -1205,7 +1217,7 @@ def _instant_filesystem_move(source_files: list, destination_dir: str, total_fil
                         speed_gbps = 999
                         eta_str = "Instant!"
                     
-                    print(f"[INSTANT_MOVE_DEBUG] Moved {moved_count}/{total_files} files ({progress_percent:.1f}%)")
+                    # print(f"[INSTANT_MOVE_DEBUG] Moved {moved_count}/{total_files} files ({progress_percent:.1f}%)")
                     
                     _send_status('progress', 'progress', 
                                f'⚡ Instant move: {moved_count}/{total_files} ({progress_percent:.1f}%)', 
@@ -1218,7 +1230,7 @@ def _instant_filesystem_move(source_files: list, destination_dir: str, total_fil
                 
             except Exception as file_error:
                 failed_files.append((source_file, str(file_error)))
-                print(f"[INSTANT_MOVE_ERROR] Failed to move {source_file}: {file_error}")
+                # print(f"[INSTANT_MOVE_ERROR] Failed to move {source_file}: {file_error}")
         
         end_time = time.time()
         duration = end_time - start_time
@@ -1227,9 +1239,9 @@ def _instant_filesystem_move(source_files: list, destination_dir: str, total_fil
         speed_mbps = (total_size_bytes / (1024 * 1024)) / duration if duration > 0.001 else 999999
         speed_gbps = speed_mbps / 1000
         
-        print(f"[INSTANT_MOVE_DEBUG] ⚡ INSTANT MOVE COMPLETED in {duration:.2f}s")
-        print(f"[INSTANT_MOVE_DEBUG] Moved: {moved_count}, Failed: {len(failed_files)}")
-        print(f"[INSTANT_MOVE_DEBUG] Effective speed: {speed_mbps:.2f} MB/s (filesystem rename)")
+        # print(f"[INSTANT_MOVE_DEBUG] ⚡ INSTANT MOVE COMPLETED in {duration:.2f}s")
+        # print(f"[INSTANT_MOVE_DEBUG] Moved: {moved_count}, Failed: {len(failed_files)}")
+        # print(f"[INSTANT_MOVE_DEBUG] Effective speed: {speed_mbps:.2f} MB/s (filesystem rename)")
         
         if len(failed_files) == 0:
             success_message = f"⚡ INSTANT MOVE SUCCESS! {moved_count} files in {duration:.2f}s (filesystem rename)"
@@ -1257,7 +1269,7 @@ def _instant_filesystem_move(source_files: list, destination_dir: str, total_fil
             
     except Exception as e:
         error_message = f"Instant move failed: {e}"
-        print(f"[INSTANT_MOVE_ERROR] {error_message}")
+        # print(f"[INSTANT_MOVE_ERROR] {error_message}")
         _send_status('error', 'error', error_message, operation='instant_move')
         return (False, error_message)
 
@@ -1269,7 +1281,7 @@ def _robocopy_cross_drive_move(source_dir: str, destination_dir: str, file_patte
     This is the slower method used when source and destination are on different drives.
     """
     try:
-        print(f"[ROBOCOPY_MOVE_DEBUG] Using robocopy with /MOV for cross-drive move...")
+        # print(f"[ROBOCOPY_MOVE_DEBUG] Using robocopy with /MOV for cross-drive move...")
         
         _send_status('progress', 'progress', f'Cross-drive move: {total_files} files...', 
                     total_files=total_files, total_size=total_size_bytes, percent=5)
@@ -1292,7 +1304,7 @@ def _robocopy_cross_drive_move(source_dir: str, destination_dir: str, file_patte
             '/IS'           # Include Same files (OVERWRITE existing files)
         ]
         
-        print(f"[ROBOCOPY_MOVE_DEBUG] Executing: {' '.join(cmd)}")
+        # print(f"[ROBOCOPY_MOVE_DEBUG] Executing: {' '.join(cmd)}")
         
         start_time = time.time()
         
@@ -1310,7 +1322,7 @@ def _robocopy_cross_drive_move(source_dir: str, destination_dir: str, file_patte
         
         def monitor_progress():
             """Monitor progress by checking destination directory file count"""
-            print(f"[PROGRESS_MONITOR_DEBUG] Starting background progress monitoring for cross-drive MOVE")
+            # print(f"[PROGRESS_MONITOR_DEBUG] Starting background progress monitoring for cross-drive MOVE")
             last_update_time = 0
             last_file_count = 0
             
@@ -1363,10 +1375,10 @@ def _robocopy_cross_drive_move(source_dir: str, destination_dir: str, file_patte
                     time.sleep(0.5)  # Check every 0.5 seconds
                     
                 except Exception as monitor_error:
-                    print(f"[PROGRESS_MONITOR_ERROR] {monitor_error}")
+                    # print(f"[PROGRESS_MONITOR_ERROR] {monitor_error}")
                     break
             
-            print(f"[PROGRESS_MONITOR_DEBUG] Background monitoring finished for cross-drive MOVE")
+            # print(f"[PROGRESS_MONITOR_DEBUG] Background monitoring finished for cross-drive MOVE")
         
         # Start background progress monitoring thread
         monitor_thread = threading.Thread(target=monitor_progress, daemon=True)
@@ -1384,9 +1396,9 @@ def _robocopy_cross_drive_move(source_dir: str, destination_dir: str, file_patte
         speed_mbps = (total_size_bytes / (1024 * 1024)) / duration if duration > 0 else 0
         speed_gbps = speed_mbps / 1000
         
-        print(f"[ROBOCOPY_MOVE_DEBUG] Cross-drive robocopy move completed in {duration:.2f}s")
-        print(f"[ROBOCOPY_MOVE_DEBUG] Speed: {speed_mbps:.2f} MB/s ({speed_gbps:.2f} Gbps)")
-        print(f"[ROBOCOPY_MOVE_DEBUG] Return code: {process.returncode}")
+        # print(f"[ROBOCOPY_MOVE_DEBUG] Cross-drive robocopy move completed in {duration:.2f}s")
+        # print(f"[ROBOCOPY_MOVE_DEBUG] Speed: {speed_mbps:.2f} MB/s ({speed_gbps:.2f} Gbps)")
+        # print(f"[ROBOCOPY_MOVE_DEBUG] Return code: {process.returncode}")
         
         # Parse robocopy output
         if isinstance(stdout, bytes):
@@ -1446,7 +1458,7 @@ def _robocopy_cross_drive_move(source_dir: str, destination_dir: str, file_patte
             
     except Exception as e:
         error_message = f"Cross-drive move failed: {e}"
-        print(f"[ROBOCOPY_MOVE_ERROR] {error_message}")
+        # print(f"[ROBOCOPY_MOVE_ERROR] {error_message}")
         _send_status('error', 'error', error_message, operation='cross_drive_move')
         return (False, error_message)
 
@@ -1455,4 +1467,3 @@ def _robocopy_cross_drive_move(source_dir: str, destination_dir: str, file_patte
 # - Multi-file support: A manager class to handle a queue of FileTransfer instances.
 # - Auto-resume: Persist transfer state (e.g., .part file and metadata) and check on startup.
 #   FileTransfer would need to support starting from an offset.
-# - GUI integration for cancel/pause/resume buttons for each active transfer.

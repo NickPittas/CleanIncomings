@@ -90,7 +90,7 @@ def create_sequence_mapping(
         # we extract once from the sequence base name or first file
         extraction_filename = base_name if base_name else first_filename
         
-        print(f"[OPTIMIZED] Extracting patterns from sequence base: '{extraction_filename}' (vs {len(files_list)} individual files)", file=sys.stderr)
+        # # print(f"[OPTIMIZED] Extracting patterns from sequence base: '{extraction_filename}' (vs {len(files_list)} individual files)", file=sys.stderr)  # (Silenced for normal use. Re-enable for troubleshooting.)
 
         # Extract all patterns at once using cached extraction
         # This single call replaces multiple individual extract_*_simple calls
@@ -122,9 +122,9 @@ def create_sequence_mapping(
                 resolution = override_extracted_values.get('resolution', resolution)
                 asset = override_extracted_values.get('asset', asset)
                 stage = override_extracted_values.get('stage', stage)
-                print(f"[BATCH_EDIT_OVERRIDE] Applied overrides: shot={shot}, task={task}, version={version}, resolution={resolution}, asset={asset}, stage={stage}", file=sys.stderr)
+                # print(f"[BATCH_EDIT_OVERRIDE] Applied overrides: shot={shot}, task={task}, version={version}, resolution={resolution}, asset={asset}, stage={stage}", file=sys.stderr)
             
-            print(f"[OPTIMIZED] Final extraction results: shot={shot}, task={task}, version={version}, resolution={resolution}, asset={asset}, stage={stage}", file=sys.stderr)
+            # # print(f"[OPTIMIZED] Final extraction results: shot={shot}, task={task}, version={version}, resolution={resolution}, asset={asset}, stage={stage}", file=sys.stderr)  # (Silenced for normal use. Re-enable for troubleshooting.)
         else:
             # Fallback to individual extraction functions if patterns not provided
             print(f"[FALLBACK] Using individual extraction functions", file=sys.stderr)
@@ -143,7 +143,7 @@ def create_sequence_mapping(
                 resolution = override_extracted_values.get('resolution', resolution)
                 asset = override_extracted_values.get('asset', asset)
                 stage = override_extracted_values.get('stage', stage)
-                print(f"[BATCH_EDIT_OVERRIDE] Applied overrides: shot={shot}, task={task}, version={version}, resolution={resolution}, asset={asset}, stage={stage}", file=sys.stderr)
+                # print(f"[BATCH_EDIT_OVERRIDE] Applied overrides: shot={shot}, task={task}, version={version}, resolution={resolution}, asset={asset}, stage={stage}", file=sys.stderr)
 
         # Rest of the function remains the same - generate target path and create proposal
         if "." in suffix:
@@ -215,11 +215,11 @@ def create_sequence_mapping(
             "ambiguous_options": []
         }
 
-        print(f"[OPTIMIZED] Created sequence proposal: {sequence_pattern} -> {target_path}", file=sys.stderr)
+        # # print(f"[OPTIMIZED] Created sequence proposal: {sequence_pattern} -> {target_path}", file=sys.stderr)  # (Silenced for normal use. Re-enable for troubleshooting.)
         return sequence_proposal
 
     except Exception as e:
-        print(f"[ERROR] Error in optimized create_sequence_mapping: {e}", file=sys.stderr)
+        # print(f"[ERROR] Error in optimized create_sequence_mapping: {e}", file=sys.stderr)
         return {
             "source": "unknown",
             "destination": "unknown",

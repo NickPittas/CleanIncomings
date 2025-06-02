@@ -449,6 +449,40 @@ class MediaPlayerUtils:
     Media player utilities class that integrates with the CleanIncomings app.
     Provides methods for launching external media players with app settings integration.
     """
+
+    def play_with_ffplay_handler(self, media_input):
+        """
+        Unified handler for ffplay playback, matching GUI expectations.
+        Accepts either a file path (str) or a sequence info dict.
+        Returns True if playback was launched, False otherwise.
+        """
+        try:
+            result = self.launch_standalone_player(media_input)
+            if not result and hasattr(self.app, 'status_manager'):
+                self.app.status_manager.add_log_message("Playback failed or was not launched.", "ERROR")
+            return result
+        except Exception as e:
+            self.logger.error(f"Playback error in play_with_ffplay_handler: {e}")
+            if hasattr(self.app, 'status_manager'):
+                self.app.status_manager.add_log_message(f"Playback error: {e}", "ERROR")
+            return False
+
+    def play_with_vlc_handler(self, media_input):
+        """
+        Unified handler for VLC playback, matching GUI expectations.
+        Accepts either a file path (str) or a sequence info dict.
+        Returns True if playback was launched, False otherwise.
+        """
+        try:
+            result = self.launch_standalone_player(media_input)
+            if not result and hasattr(self.app, 'status_manager'):
+                self.app.status_manager.add_log_message("Playback failed or was not launched.", "ERROR")
+            return result
+        except Exception as e:
+            self.logger.error(f"Playback error in play_with_vlc_handler: {e}")
+            if hasattr(self.app, 'status_manager'):
+                self.app.status_manager.add_log_message(f"Playback error: {e}", "ERROR")
+            return False
     
     def __init__(self, app_instance):
         """
@@ -458,6 +492,47 @@ class MediaPlayerUtils:
             app_instance: The main CleanIncomings app instance        """
         self.app = app_instance
         self.logger = logging.getLogger(__name__)
+
+    def launch_standalone_player(self, media_input):
+        """
+        Launch the standalone Nuke-style player as a subprocess for video or image sequences.
+        Accepts either a file path (str) or a sequence info dict.
+        Returns True if launch was successful, False otherwise.
+        """
+        import sys
+        import subprocess
+        import os
+        # Determine the path to player_window.py
+        # Always resolve project root as two levels up from this file (python/utils/ -> project root)
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+        player_path = os.path.join(project_root, 'standalone_player', 'player_window.py')
+        if isinstance(media_input, dict):
+            # Sequence dict: pass first file in 'files' list
+            files = media_input.get('files')
+            if not files or not isinstance(files, list):
+                self.logger.error("No files found in sequence_info dict.")
+                return False
+            first_file = files[0]
+            if isinstance(first_file, dict):
+                first_file_path = first_file.get('path') or first_file.get('filename')
+            else:
+                first_file_path = str(first_file)
+            args = [sys.executable, player_path, first_file_path]
+        elif isinstance(media_input, str):
+            args = [sys.executable, player_path, media_input]
+        else:
+            self.logger.error(f"Unsupported input type for standalone player: {type(media_input)}")
+            return False
+        try:
+            print(f"[DEBUG] Launching standalone player: {args} (cwd={project_root})")
+            self.logger.info(f"Launching standalone player: {args} (cwd={project_root})")
+            subprocess.Popen(args, cwd=project_root)
+            self.logger.info(f"Launched standalone player with: {args}")
+            return True
+        except Exception as e:
+            print(f"[ERROR] Failed to launch standalone player: {e}")
+            self.logger.error(f"Failed to launch standalone player: {e}")
+            return False
     
     def get_ffplay_path(self) -> Optional[str]:
         """

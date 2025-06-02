@@ -10,7 +10,8 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QSplitter, QFrame, QLabel, QPushButton, QLineEdit, QComboBox,
     QTreeWidget, QTreeWidgetItem, QTextEdit, QStatusBar, QHeaderView,
-    QCheckBox, QProgressBar, QMessageBox, QFileDialog
+    QCheckBox, QProgressBar, QMessageBox, QFileDialog, QDialog,
+    QSizePolicy  # Added QSizePolicy for widget sizing
 )
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QObject
 from PyQt5.QtGui import QFont, QIcon, QPixmap
@@ -64,17 +65,21 @@ except Exception as e:
 
 # Import modular components (using PyQt5 compatible versions where available)
 from python.gui_components.status_manager_pyqt5 import StatusManager
-from python.gui_components.theme_manager import ThemeManager  
+from python.gui_components.theme_manager_pyqt5 import ThemeManagerPyQt5
 from python.gui_components.file_operations_manager import FileOperationsManager
 from python.gui_components.tree_manager_pyqt5 import TreeManager
 from python.gui_components.scan_manager import ScanManager
+from python.gui_components.progress_window_pyqt5 import ProgressWindowPyQt5
 from python.gui_components.settings_manager_pyqt5 import SettingsManager
 from python.gui_components.widget_factory_pyqt5 import WidgetFactory
-# from python.gui_components.vlc_player_window import VLCPlayerWindow  # Skip for now
-
+from python.gui_components.settings_window_pyqt5 import SettingsWindow
+from python.gui_components.batch_edit_dialog_pyqt5 import BatchEditDialogPyQt5
 from python.utils.media_player import MediaPlayerUtils
 
 from python.gui_normalizer_adapter import GuiNormalizerAdapter
+
+import logging
+import re  # Added import re
 
 # Path to script directory
 _script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -98,8 +103,12 @@ class StringVar(QObject):
 
 
 class CleanIncomingsApp(QMainWindow):
-    def __init__(self):
+    def __init__(self, qt_app=None):
         super().__init__()
+        self.qt_app = qt_app  # Store QApplication reference
+
+        # Initialize logger first
+        self._initialize_logger()
 
         self.vlc_module_available = _vlc_module_imported_successfully  # Set the flag
 
@@ -132,11 +141,37 @@ class CleanIncomingsApp(QMainWindow):
         self.normalizer = self._initialize_normalizer()
 
         # Initialize modular components
-        self._initialize_components()
+        self._initialize_managers() # Renamed from _initialize_components for clarity
+        self._initialize_services()
 
-        # Create widgets and setup
+        # Floating progress window for scanning
+        self.progress_window = ProgressWindowPyQt5(self)
+
+        # Create widgets and setup UI
         self._create_ui()
+        # Hardcode the theme to 'nuke_darkson' (or your preferred theme)
+        self.theme_manager.current_theme_name = 'nuke_darkson'
+        self.theme_manager.apply_theme('nuke_darkson')
         self._configure_profiles()
+        self._load_initial_settings()
+
+        # Connect signals after UI is created
+        self._connect_signals()
+
+        # self.logger.info(  # (Silenced for normal use. Re-enable for troubleshooting.)"CleanIncomingsApp initialized successfully.")
+
+    def _initialize_logger(self):
+        """Initialize a basic logger for the application."""
+        self.logger = logging.getLogger(__name__)
+        self.logger.setLevel(logging.DEBUG)  # Set to DEBUG for development
+        # Create a handler if not already configured (e.g., by a parent logger)
+        if not self.logger.handlers:
+            ch = logging.StreamHandler()
+            ch.setLevel(logging.DEBUG)
+            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+            ch.setFormatter(formatter)
+            self.logger.addHandler(ch)
+        # # self.logger.debug(  # (Silenced for normal use. Re-enable for troubleshooting.)"Logger initialized for CleanIncomingsApp.")
 
     def _determine_config_path(self) -> str:
         """Determine the configuration directory path."""
@@ -159,6 +194,15 @@ class CleanIncomingsApp(QMainWindow):
             self.profile_names = normalizer.get_profile_names()
             if self.profile_names:
                 self.selected_profile_name.set(self.profile_names[0])
+            
+            # Connect progress signal if the normalizer adapter supports it
+            if hasattr(normalizer, 'progress_updated_signal'): # Assuming signal name from ISSUES_3.md context
+                normalizer.progress_updated_signal.connect(self.update_progress_from_normalizer)
+            elif hasattr(normalizer, 'progress_callback'): # Fallback for older name
+                normalizer.progress_callback.connect(self.update_progress_from_normalizer)
+            else:
+                print("Warning: GuiNormalizerAdapter does not have 'progress_updated_signal' or 'progress_callback'. Progress updates may not work.")
+
             return normalizer
         except Exception as e: # Catch specific exception
             error_message = f"Failed to initialize Normalizer: {e}. Check config path and files."
@@ -166,50 +210,157 @@ class CleanIncomingsApp(QMainWindow):
             self.profile_names = []
             return None
 
-    def _initialize_components(self):
-        """Initialize all modular components."""
-        self.status_manager = StatusManager(self)
-        self.theme_manager = ThemeManager(self)
-        self.file_operations_manager = FileOperationsManager(self)
+    def _initialize_managers(self):
+        """Initialize various manager classes for core functionalities."""
+        self.theme_manager = ThemeManagerPyQt5(self.qt_app, logger=self.logger)
+        self.widget_factory = WidgetFactory(self)
         self.tree_manager = TreeManager(self)
         self.scan_manager = ScanManager(self)
+        # Connect scan progress updates to floating window
+        if hasattr(self.scan_manager, 'scan_progress_signal'):
+            self.scan_manager.scan_progress_signal.connect(self._handle_scan_progress_update)
+        # If using a queue-based callback, patch _check_scan_queue or equivalent
+        self._patch_scan_manager_progress_callback()
+
+        self.file_operations_manager = FileOperationsManager(self)
+        self.status_manager = StatusManager(self)
         self.settings_manager = SettingsManager(self)
-        self.widget_factory = WidgetFactory(self)  # Initialize widget factory
+        self.settings = self.settings_manager # Alias for convenience, after manager creation
+        # # self.logger.debug(  # (Silenced for normal use. Re-enable for troubleshooting.)"Core managers initialized.")
+
+    def _patch_scan_manager_progress_callback(self):
+        # Monkey-patch or wrap scan_manager's queue processing to update the floating window
+        orig_check_scan_queue = getattr(self.scan_manager, '_check_scan_queue', None)
+        if orig_check_scan_queue:
+            def wrapped_check_scan_queue(*args, **kwargs):
+                result = orig_check_scan_queue(*args, **kwargs)
+                # After original processing, update floating window if progress info present
+                if hasattr(self.scan_manager, 'last_progress_msg'):
+                    msg = self.scan_manager.last_progress_msg
+                    if isinstance(msg, dict):
+                        self._handle_scan_progress_update(msg)
+                return result
+            self.scan_manager._check_scan_queue = wrapped_check_scan_queue
+
+    def _handle_scan_progress_update(self, progress_msg):
+        # progress_msg: dict with at least 'stage', 'percent', 'details', 'status'
+        stage = progress_msg.get('stage', 'Scanning')
+        percent = int(progress_msg.get('percent', 0))
+        details = progress_msg.get('details', '')
+        status = progress_msg.get('status', 'in_progress')
+        if status == 'in_progress':
+            self.progress_window.show_progress(stage=stage, percent=percent, details=details)
+        elif status == 'completed':
+            self.progress_window.show_progress(stage="Completed", percent=100, details=details)
+            self.progress_window.close_progress()
+            self.refresh_btn.setEnabled(True)
+        elif status == 'error':
+            self.progress_window.error(details)
+            self.refresh_btn.setEnabled(True)
+        else:
+            self.progress_window.show_progress(stage=stage, percent=percent, details=details)
+
+        self.file_operations_manager = FileOperationsManager(self)
+        self.status_manager = StatusManager(self)
+        self.settings_manager = SettingsManager(self)
+        # # self.logger.debug(  # (Silenced for normal use. Re-enable for troubleshooting.)"Core managers initialized.")
+
+    def _initialize_services(self):
+        """Initialize additional services."""
         self.media_player_utils = MediaPlayerUtils(self)  # Initialize media_player_utils
+
+    def _connect_signals(self):
+        """Connect signals from widgets to their handlers."""
+        # Top control connections
+        self.profile_combobox.currentTextChanged.connect(self._on_profile_changed)
+        # Source folder entry textChanged is connected in _create_top_control_frame
+        # Dest folder entry textChanged is connected in _create_top_control_frame
+        self.refresh_btn.clicked.connect(self._on_scan_clicked)
+        self.settings_btn.clicked.connect(self._open_settings_window)
+
+    def _on_scan_clicked(self):
+        # Start scan and show floating progress window
+        self.progress_window.show_progress(stage="Initializing Scan...", percent=0, details="Preparing to scan...")
+        self.refresh_btn.setEnabled(False)
+        self.scan_manager.refresh_scan_data()
+
+        # Theme is now hardcoded below; no combo boxes or handlers
+
+        # Source tree connections
+        if hasattr(self, 'source_tree'):
+            self.source_tree.itemSelectionChanged.connect(self.tree_manager.on_source_tree_selection_changed)
+            self.show_all_btn.clicked.connect(self.tree_manager.clear_source_folder_filter) # Show all by clearing filter
+
+        # Preview tree connections
+        if hasattr(self, 'preview_tree'):
+            self.preview_tree.itemSelectionChanged.connect(self._on_tree_selection_change)
+            self.preview_tree.itemDoubleClicked.connect(self._on_preview_item_double_clicked)
+            # Header click for sorting
+            self.preview_tree.header().sectionClicked.connect(self._on_preview_header_clicked)
+
+        # Preview control connections
+        self.sort_menu.currentTextChanged.connect(self._on_sort_change)
+        self.sort_direction_btn.clicked.connect(self._toggle_sort_direction)
+        self.filter_combo.currentTextChanged.connect(self._on_filter_change)
+        self.select_all_seq_btn.clicked.connect(self._select_all_sequences)
+        self.select_all_files_btn.clicked.connect(self._select_all_files)
+        self.clear_selection_btn.clicked.connect(self._clear_selection)
+        self.batch_edit_btn.clicked.connect(self._open_batch_edit_dialog)
+
+        # File operation connections
+        self.copy_selected_btn.clicked.connect(self.file_operations_manager.on_copy_selected_click)
+        self.move_selected_btn.clicked.connect(self.file_operations_manager.on_move_selected_click)
+
+        # # self.logger.debug(  # (Silenced for normal use. Re-enable for troubleshooting.)"UI signals connected.")
+
+    def update_progress_from_normalizer(self, progress_data: dict):
+        """Update progress from normalizer. Expects a dict with 'value' and 'text'."""
+        # This method should be connected to the normalizer's progress signal
+        value = progress_data.get('value', 0)
+        text = progress_data.get('text', '')
+        # print(f"Normalizer progress: {value}% - {text}")
+        if hasattr(self, 'status_manager') and hasattr(self.status_manager, 'update_scan_progress'):
+            self.status_manager.update_scan_progress(value, text)
+        elif hasattr(self, 'status_manager') and hasattr(self.status_manager, 'update_progress'): # older name
+            self.status_manager.update_progress(value, text)
+        else:
+            print("Warning: StatusManager or its progress update method not found.")
+
+    def get_geometry_as_string(self) -> Optional[str]:
+        """Returns the window geometry as a 'WxH+X+Y' string."""
+        try:
+            geom = self.geometry()  # This is QMainWindow.geometry()
+            if geom:
+                return f"{geom.width()}x{geom.height()}+{geom.x()}+{geom.y()}"
+            self.logger.warning("get_geometry_as_string: self.geometry() returned None")
+            return None
+        except Exception as e:
+            self.logger.error(f"Error in get_geometry_as_string: {e}")
+            return None
+
+    def set_geometry_from_string(self, geom_string: Optional[str]):
+        """Sets the window geometry from a 'WxH+X+Y' string."""
+        if not geom_string:
+            self.logger.warning("set_geometry_from_string: Received empty or None geom_string.")
+            return
         
-        # Skip VLC player window for now
-        # self.VLCPlayerWindow = VLCPlayerWindow  # Assign the class to the app instance
-
-        # Create compatibility layer for tkinter components
-        self._setup_compatibility_layer()
-
-        # Load settings first
-        self.settings = self.settings_manager.load_settings()
-        self.ffplay_path_var.set(self.settings.get("ui_state", {}).get("ffplay_path", ""))  # Initialize ffplay_path_var
-        print(f"Loaded settings: {self.settings}")
+        match = re.fullmatch(r"(\d+)x(\d+)\+(\d+)\+(\d+)", geom_string)
+        if match:
+            try:
+                width, height, x, y = map(int, match.groups())
+                self.resize(width, height)  # QMainWindow.resize
+                self.move(x, y)            # QMainWindow.move
+                # # self.logger.debug(  # (Silenced for normal use. Re-enable for troubleshooting.)f"Geometry set from string: {geom_string}")
+            except ValueError as e:
+                self.logger.error(f"Error converting geometry parts to int from string '{geom_string}': {e}")
+            except Exception as e:
+                self.logger.error(f"Error applying geometry from string '{geom_string}': {e}")
+        else:
+            self.logger.warning(f"Invalid geometry string format: '{geom_string}'. Expected 'WIDTHxHEIGHT+X+Y'.")
 
     def _setup_compatibility_layer(self):
         """Set up compatibility methods for tkinter components."""
-        # Add methods that original components might call but don't exist in PyQt5
-        
-        # Add tkinter-like geometry method for settings manager
-        def geometry(geom_string=None):
-            if geom_string is None:
-                # Return current geometry
-                geom = self.geometry()
-                return f"{geom.width()}x{geom.height()}+{geom.x()}+{geom.y()}"
-            else:
-                # Parse and set geometry (format: "WIDTHxHEIGHT+X+Y")
-                try:
-                    size_part, pos_part = geom_string.split('+', 1)
-                    width, height = map(int, size_part.split('x'))
-                    x, y = map(int, pos_part.split('+'))
-                    self.resize(width, height)
-                    self.move(x, y)
-                except:
-                    print(f"Invalid geometry string: {geom_string}")
-          # Bind the compatibility method
-        self.geometry = geometry
+        # The geometry override has been removed. self.geometry is now the default QMainWindow.geometry().
         
         # Add after method compatibility for QTimer
         def after(delay_ms, callback):
@@ -249,41 +400,51 @@ class CleanIncomingsApp(QMainWindow):
         # Create frame
         control_frame = QFrame()
         control_frame.setObjectName("control_panel_frame")  # For styling
-        control_layout = QVBoxLayout(control_frame)  # Changed to vertical for better organization
-        control_layout.setContentsMargins(10, 8, 10, 8)
-        control_layout.setSpacing(8)
+        control_layout = QVBoxLayout(control_frame)
+        control_layout.setContentsMargins(5, 2, 5, 2)  # Minimal margins
+        control_layout.setSpacing(2)  # Minimal spacing
+        control_frame.setMinimumHeight(0)
+        control_frame.setMaximumHeight(80)  # Cap the height for compactness
         
         # First row - Profile and main actions
         first_row = QHBoxLayout()
-        first_row.setSpacing(15)
-        
-        # Profile Selection (more compact)
+
+        # Profile selection
         profile_label = QLabel("Profile:")
-        profile_label.setMinimumWidth(50)
         first_row.addWidget(profile_label)
-        
         self.profile_combobox = QComboBox()
-        self.profile_combobox.setMinimumWidth(180)
-        self.profile_combobox.setMaximumWidth(220)
+        self.profile_combobox.setMinimumWidth(150)
+        self.profile_combobox.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         first_row.addWidget(self.profile_combobox)
-        
+
         first_row.addSpacing(10)
-          # Compact action buttons
-        self.refresh_btn = self.widget_factory.create_accent_button("🔄 Scan", "refresh", "Scan source folder for files", min_width=80, max_width=100)
-        self.refresh_btn.clicked.connect(self.scan_manager.refresh_scan_data)
+
+        # Refresh button (Scan)
+        self.refresh_btn = self.widget_factory.create_accent_button(
+            text="Scan",
+            icon_name="scan",
+            tooltip="Scan source folder with selected profile",
+            min_width=90
+        )
         first_row.addWidget(self.refresh_btn)
-        
-        settings_btn = self.widget_factory.create_accent_button("⚙️ Settings", "settings", tooltip="Open application settings", min_width=80, max_width=110)
-        settings_btn.clicked.connect(self._open_settings_window)
-        first_row.addWidget(settings_btn)
-        
-        first_row.addStretch()  # Push everything to the left
+
+        # Settings button
+        self.settings_btn = self.widget_factory.create_accent_button(
+            text="Settings",
+            icon_name="settings",
+            tooltip="Open application settings",
+            min_width=90
+        )
+        first_row.addWidget(self.settings_btn)
+
+        first_row.addStretch(1) # Pushes theme controls to the right
+
         
         control_layout.addLayout(first_row)
         
-        # Second row - Folder selections with compact layout
+        # Second row - Folder selection
         second_row = QHBoxLayout()
-        second_row.setSpacing(10)
+        second_row.setSpacing(2)  # Minimal spacing
         
         # Source folder section
         source_label = QLabel("Source:")
@@ -314,7 +475,7 @@ class CleanIncomingsApp(QMainWindow):
         
         control_layout.addLayout(second_row)
         
-        parent_layout.addWidget(control_frame)
+        parent_layout.addWidget(control_frame, stretch=0)  # No stretch for header
 
     def _create_main_layout(self, parent_layout):
         """Create the main layout with resizable panels using QSplitter."""
@@ -330,25 +491,21 @@ class CleanIncomingsApp(QMainWindow):
         # Set initial splitter sizes (400px for source tree, rest for preview)
         self.main_horizontal_splitter.setSizes([400, 1100])
         
-        parent_layout.addWidget(self.main_horizontal_splitter)
+        parent_layout.addWidget(self.main_horizontal_splitter, stretch=1)  # Main area gets all extra space
 
     def _create_source_tree_section(self):
         """Create the source tree section with improved layout and controls."""
         source_tree_group = self.widget_factory.create_group_box("Source Folder Structure")
-        source_tree_layout = source_tree_group.layout()  # Get existing layout
-        if source_tree_layout is None:  # Should not happen with current factory
-            source_tree_layout = QVBoxLayout()
-            source_tree_group.setLayout(source_tree_layout)
+        source_tree_layout = source_tree_group.layout() # QVBoxLayout by default
 
         # Header for title and Show All button
         source_header_layout = QHBoxLayout()
         
-        source_title_label = self.widget_factory.create_label("Source Folder", icon_name="folder_closed", bold=True, font_size=12)
+        source_title_label = self.widget_factory.create_label("Source Structure", icon_name="folder_open", bold=True, font_size=11) # Changed icon
         source_header_layout.addWidget(source_title_label)
         source_header_layout.addStretch()
         
-        self.show_all_btn = self.widget_factory.create_compact_button("Show All", icon_name="info", tooltip="Show all sequences in the source tree") # Changed to create_compact_button
-        self.show_all_btn.clicked.connect(self._show_all_sequences)
+        self.show_all_btn = self.widget_factory.create_compact_button("🌲 Show All", icon_name="eye", tooltip="Clear folder filter and show all items in preview") # Changed icon and text
         source_header_layout.addWidget(self.show_all_btn)
         
         source_tree_layout.addLayout(source_header_layout)
@@ -407,21 +564,21 @@ class CleanIncomingsApp(QMainWindow):
         header_layout.addSpacing(15)
         
         # Selection buttons
-        select_all_seq_btn = QPushButton("Select Sequences")
-        select_all_seq_btn.setMaximumWidth(160)
-        select_all_seq_btn.clicked.connect(self._select_all_sequences)
-        header_layout.addWidget(select_all_seq_btn)
-        
-        select_all_files_btn = QPushButton("Select Files")
-        select_all_files_btn.setMaximumWidth(130)
-        select_all_files_btn.clicked.connect(self._select_all_files)
-        header_layout.addWidget(select_all_files_btn)
-        
-        clear_selection_btn = QPushButton("Clear")
-        clear_selection_btn.setMaximumWidth(90)
-        clear_selection_btn.clicked.connect(self._clear_selection)
-        header_layout.addWidget(clear_selection_btn)
-        
+        self.select_all_seq_btn = QPushButton("Select Sequences")
+        self.select_all_seq_btn.setMaximumWidth(160)
+        self.select_all_seq_btn.clicked.connect(self._select_all_sequences)
+        header_layout.addWidget(self.select_all_seq_btn)
+
+        self.select_all_files_btn = QPushButton("Select Files")
+        self.select_all_files_btn.setMaximumWidth(130)
+        self.select_all_files_btn.clicked.connect(self._select_all_files)
+        header_layout.addWidget(self.select_all_files_btn)
+
+        self.clear_selection_btn = QPushButton("Clear")
+        self.clear_selection_btn.setMaximumWidth(90)
+        self.clear_selection_btn.clicked.connect(self._clear_selection)
+        header_layout.addWidget(self.clear_selection_btn)
+
         self.batch_edit_btn = QPushButton("Batch Edit")
         self.batch_edit_btn.setMaximumWidth(110)
         self.batch_edit_btn.clicked.connect(self._open_batch_edit_dialog)
@@ -439,6 +596,81 @@ class CleanIncomingsApp(QMainWindow):
         self.preview_tree = self.widget_factory.create_preview_tree()
         self.preview_tree.itemSelectionChanged.connect(self._on_tree_selection_change)
         preview_layout.addWidget(self.preview_tree)
+        # --- Enhanced context menu for playback/debug ---
+        from PyQt5.QtWidgets import QMenu, QAction, QMessageBox, QApplication
+        from PyQt5.QtCore import Qt
+        self.preview_tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        import json
+        def show_preview_context_menu(point):
+            selected = self.preview_tree.selectedItems()
+            if not selected:
+                return
+            item = selected[0]
+            item_data = item.data(0, Qt.UserRole) or {}
+            is_sequence = item_data.get('type', '').lower() == 'sequence' and item_data.get('sequence_info')
+            menu = QMenu(self.preview_tree)
+            action_vlc = QAction("Play with VLC", self.preview_tree)
+            action_ffplay = QAction("Play with ffplay", self.preview_tree)
+            action_show_data = QAction("Show Item Data", self.preview_tree)
+            action_copy_path = QAction("Copy Path to Clipboard", self.preview_tree)
+            action_print_console = QAction("Print Item to Console", self.preview_tree)
+            menu.addAction(action_vlc)
+            menu.addAction(action_ffplay)
+            if is_sequence:
+                action_show_seq = QAction("Show Sequence Frame List", self.preview_tree)
+                menu.addAction(action_show_seq)
+            menu.addSeparator()
+            menu.addAction(action_show_data)
+            menu.addAction(action_copy_path)
+            menu.addAction(action_print_console)
+            def play_vlc():
+                # print("[DEBUG CONTEXT MENU] VLC item_data:", item_data)
+                # print("[DEBUG CONTEXT MENU] VLC path:", item_data.get('path'))
+                # print("[DEBUG CONTEXT MENU] VLC name:", item_data.get('name'))
+                # Always use the ACTUAL source_path for playback (never destination fields)
+                media_path = item_data.get('source_path') or item_data.get('path')
+                # print("[DEBUG CONTEXT MENU] VLC media_path (to player):", media_path)
+                if hasattr(self, 'play_with_vlc_handler'):
+                    if is_sequence:
+                        self.play_with_vlc_handler(item_data['sequence_info'])
+                    else:
+                        self.play_with_vlc_handler(media_path)
+                elif hasattr(self, 'play_with_vlc'):
+                    self.play_with_vlc(media_path)
+                else:
+                    QMessageBox.warning(self, "VLC Playback", "VLC playback handler is not implemented.")
+            def play_ffplay():
+                # print("[DEBUG CONTEXT MENU] FFPLAY item_data:", item_data)
+                # print("[DEBUG CONTEXT MENU] FFPLAY path:", item_data.get('path'))
+                # print("[DEBUG CONTEXT MENU] FFPLAY name:", item_data.get('name'))
+                # Always use the ACTUAL source_path for playback (never destination fields)
+                media_path = item_data.get('source_path') or item_data.get('path')
+                # print("[DEBUG CONTEXT MENU] FFPLAY media_path (to player):", media_path)
+                if hasattr(self, 'play_with_ffplay_handler'):
+                    if is_sequence:
+                        self.play_with_ffplay_handler(item_data['sequence_info'])
+                    else:
+                        self.play_with_ffplay_handler(media_path)
+                else:
+                    QMessageBox.warning(self, "ffplay Playback", "ffplay playback handler is not implemented.")
+            action_vlc.triggered.connect(play_vlc)
+            action_ffplay.triggered.connect(play_ffplay)
+
+            def show_item_data():
+                data_str = json.dumps(item_data, indent=2)
+                QMessageBox.information(self, "Item Data", data_str)
+            def copy_path():
+                path = item_data.get('path', '')
+            def show_sequence_frames():
+                if is_sequence:
+                    seq = item_data['sequence_info']
+                    frames = seq.get('files', [])
+                    frame_names = [f.get('filename', str(f)) if isinstance(f, dict) else str(f) for f in frames]
+                    QMessageBox.information(self, "Sequence Frames", "\n".join(frame_names) if frame_names else "No frames found.")
+            if is_sequence:
+                action_show_seq.triggered.connect(show_sequence_frames)
+            menu.exec_(self.preview_tree.viewport().mapToGlobal(point))
+        self.preview_tree.customContextMenuRequested.connect(show_preview_context_menu)
         
         # Action buttons
         action_layout = QHBoxLayout()
@@ -458,53 +690,54 @@ class CleanIncomingsApp(QMainWindow):
         
         preview_layout.addLayout(action_layout)
         
-        # Info display placeholder
-        info_frame = QFrame()
-        info_frame.setFixedHeight(60)
-        info_layout = QHBoxLayout(info_frame)
-        info_label = QLabel("Details of selected item - Coming Soon!")
-        info_layout.addWidget(info_label)
-        preview_layout.addWidget(info_frame)
+
         
         self.main_horizontal_splitter.addWidget(preview_group)
 
     def _configure_profiles(self):
-        """Configure the profile combobox based on loaded profiles."""
-        if self.normalizer and self.profile_names:
-            self.profile_combobox.clear()
+        """Configure profiles based on loaded data and saved settings."""
+        if not self.normalizer:
+            self.logger.error("Normalizer not initialized, cannot configure profiles.")
+            return
+
+        self.profile_names = self.normalizer.get_profile_names()
+        self.profile_combobox.clear()
+        if self.profile_names:
             self.profile_combobox.addItems(self.profile_names)
-            if self.profile_names:
-                # Check if we have a saved profile selection
-                saved_profile = self.settings.get("ui_state", {}).get("selected_profile", "")
-                if saved_profile and saved_profile in self.profile_names:
-                    default_profile_to_set = saved_profile
-                else:
-                    default_profile_to_set = self.profile_names[0]
-                
-                self.profile_combobox.setCurrentText(default_profile_to_set)
-                self.selected_profile_name.set(default_profile_to_set)
-                print(f"Set profile to: {default_profile_to_set}")
-            else:
-                if hasattr(self, 'status_label'): 
-                    self.status_label.setText("No profiles available in config.")
-                self.profile_combobox.addItem("No Profiles Available")
-                self.profile_combobox.setEnabled(False)
-        elif self.normalizer is None:
-            if hasattr(self, 'status_label'): 
-                self.status_label.setText("Normalizer error. Check logs.")
-            self.profile_combobox.addItem("Error: Profiles N/A")
-            self.profile_combobox.setEnabled(False)
+            
+            # Attempt to restore the last selected profile from settings
+            # Use the get_setting method of SettingsManager
+            saved_profile = self.settings.get_setting("ui_state", "selected_profile", default="")
+            
+            if saved_profile and saved_profile in self.profile_names:
+                self.profile_combobox.setCurrentText(saved_profile)
+                self.selected_profile_name.set(saved_profile)
+                self.normalizer.set_profile(saved_profile)
+                # # self.logger.debug(  # (Silenced for normal use. Re-enable for troubleshooting.)f"Restored and applied profile: {saved_profile}")
+            elif self.profile_names: # If no saved profile or saved is invalid, use the first available
+                first_profile = self.profile_names[0]
+                self.profile_combobox.setCurrentText(first_profile)
+                self.selected_profile_name.set(first_profile)
+                self.normalizer.set_profile(first_profile)
+                # # self.logger.debug(  # (Silenced for normal use. Re-enable for troubleshooting.)f"No valid saved profile, applied first available profile: {first_profile}")
         else:
-            if hasattr(self, 'status_label'): 
-                self.status_label.setText("No profiles found after init.")
-            self.profile_combobox.addItem("No Profiles Loaded")
-            self.profile_combobox.setEnabled(False)
+            self.logger.warning("No profiles found to configure.")
+            # Optionally, disable profile-dependent UI elements here
 
-        # Connect profile combobox signal
-        self.profile_combobox.currentTextChanged.connect(self._on_profile_changed)
-
-        # Restore UI state after widgets are created
-        QTimer.singleShot(100, lambda: self.settings_manager.restore_ui_state(self.settings.get("ui_state", {})))
+    def _load_initial_settings(self):
+        """Load initial settings and apply them."""
+        try:
+            # Load all settings using the SettingsManager's method
+            all_settings = self.settings.load_settings()
+            
+            # Now get the ui_state section from the loaded dictionary
+            ui_state = all_settings.get("ui_state", {})
+            
+            if ui_state: # Check if ui_state dictionary is not empty
+                self.settings.restore_ui_state(ui_state)
+                # # self.logger.debug(  # (Silenced for normal use. Re-enable for troubleshooting.)"UI state restored from settings.")
+        except Exception as e:
+            self.logger.error(f"Error loading initial settings: {e}")
 
     def _handle_profile_change(self, profile_name: str):
         """Handle profile change from StringVar."""
@@ -515,6 +748,16 @@ class CleanIncomingsApp(QMainWindow):
         """Handle profile combobox change."""
         self.selected_profile_name.set(profile_name)
         print(f"Profile changed to: {profile_name}")
+
+    def _on_theme_mode_change(self, mode: str):
+        """Handle theme mode (appearance) change."""
+        # # self.logger.debug(  # (Silenced for normal use. Re-enable for troubleshooting.)f"Theme mode changed to: {mode}")
+        self.theme_manager.apply_theme(self.theme_manager.get_current_theme_name())
+
+    def _on_color_theme_change(self, theme_name: str):
+        """Handle color theme change."""
+        # # self.logger.debug(  # (Silenced for normal use. Re-enable for troubleshooting.)f"Color theme changed to: {theme_name}")
+        self.theme_manager.apply_theme(theme_name)
 
     # Placeholder methods for the various UI actions
     def _select_source_folder(self):
@@ -534,21 +777,28 @@ class CleanIncomingsApp(QMainWindow):
             self.status_label.setText(f"Destination folder: {folder}")
 
     def _open_settings_window(self):
-        """Open settings window."""
+        """Open the settings window as a modal dialog, preventing multiple instances."""
         try:
-            from python.gui_components.settings_window_pyqt5 import SettingsWindow
-            
-            settings_window = SettingsWindow(
+            # Prevent multiple settings windows
+            if hasattr(self, 'settings_window') and self.settings_window is not None:
+                if self.settings_window.isVisible():
+                    self.settings_window.raise_()
+                    self.settings_window.activateWindow()
+                    return
+                else:
+                    self.settings_window = None  # Reset if closed
+
+            self.settings_window = SettingsWindow(
                 parent=self,
                 config_dir=self._config_dir_path,
                 settings_manager=self.settings_manager
             )
-            
             # Connect to settings changes
-            settings_window.settings_changed.connect(self._on_settings_changed)
-            
-            settings_window.show()
-            
+            self.settings_window.settings_changed.connect(self._on_settings_changed)
+            # Show modally
+            self.settings_window.exec_()
+            # After closing, clear the reference
+            self.settings_window = None
         except ImportError as e:
             QMessageBox.warning(
                 self,
@@ -565,32 +815,64 @@ class CleanIncomingsApp(QMainWindow):
         self.status_label.setText("Settings updated successfully.")
         print("Settings have been updated.")
 
-    def _show_all_sequences(self):
-        """Show all sequences in source tree."""
-        # Placeholder - will be connected to scan manager
-        print("Show all sequences clicked")
-
-    def _on_sort_change(self, value):
+    def _on_sort_change(self, sort_column_text: str):
         """Handle sort column change."""
-        print(f"Sort changed to: {value}")
+        try:
+            if hasattr(self, 'tree_manager') and hasattr(self.tree_manager, 'sort_preview_tree'):
+                ascending = self.sort_direction_btn.text() == "↑"
+                self.tree_manager.sort_preview_tree(sort_column_text, ascending)
+                print(f"Sorting preview tree by: {sort_column_text}, Ascending: {ascending}")
+            else:
+                print("Warning: TreeManager or sort_preview_tree method not found.")
+                pass
+        except Exception as e:
+            print(f"Error during sort: {e}")
 
     def _toggle_sort_direction(self):
-        """Toggle sort direction."""
+        """Toggle sort direction and re-apply sort."""
         current_text = self.sort_direction_btn.text()
         new_text = "↓" if current_text == "↑" else "↑"
         self.sort_direction_btn.setText(new_text)
+        
+        # Re-apply sort with new direction
+        current_sort_column = self.sort_menu.currentText()
+        if current_sort_column: # Ensure a column is actually selected
+            self._on_sort_change(current_sort_column)
 
-    def _on_filter_change(self, value):
-        """Handle filter change."""
-        print(f"Filter changed to: {value}")
+    def _on_filter_change(self, filter_text: str):
+        """Handle filter change in the preview tree."""
+        try:
+            if hasattr(self, 'tree_manager') and hasattr(self.tree_manager, 'filter_preview_tree'):
+                self.tree_manager.filter_preview_tree(filter_text)
+                print(f"Filtering preview tree by: {filter_text}")
+            else:
+                print("Warning: TreeManager or filter_preview_tree method not found.")
+        except Exception as e:
+            print(f"Error during filter: {e}")
 
     def _select_all_sequences(self):
         """Select all sequences in preview tree."""
-        print("Select all sequences clicked")
+        try:
+            if hasattr(self, 'tree_manager') and hasattr(self.tree_manager, 'select_all_sequences_in_preview_tree'):
+                self.tree_manager.select_all_sequences_in_preview_tree()
+                print("Selected all sequences in preview tree.")
+                self._on_tree_selection_change() # Update selection-dependent UI
+            else:
+                print("Warning: TreeManager or select_all_sequences_in_preview_tree method not found.")
+        except Exception as e:
+            print(f"Error during select all sequences: {e}")
 
     def _select_all_files(self):
         """Select all files in preview tree."""
-        print("Select all files clicked")
+        try:
+            if hasattr(self, 'tree_manager') and hasattr(self.tree_manager, 'select_all_files_in_preview_tree'):
+                self.tree_manager.select_all_files_in_preview_tree()
+                print("Selected all files in preview tree.")
+                self._on_tree_selection_change() # Update selection-dependent UI
+            else:
+                print("Warning: TreeManager or select_all_files_in_preview_tree method not found.")
+        except Exception as e:
+            print(f"Error during select all files: {e}")
 
     def _clear_selection(self):
         """Clear selection in preview tree."""
@@ -598,8 +880,137 @@ class CleanIncomingsApp(QMainWindow):
         self._on_tree_selection_change()
 
     def _open_batch_edit_dialog(self):
-        """Open batch edit dialog."""
-        QMessageBox.information(self, "Batch Edit", "Batch edit dialog will be implemented in PyQt5")
+        """
+        Open batch edit dialog for selected preview items. Prevents multiple dialogs from being open at once.
+        Ensures only one signal connection per dialog instance. Adds debug prints for troubleshooting.
+        """
+        selected_preview_items_data = []
+        if hasattr(self, 'preview_tree') and self.preview_tree.selectedItems():
+            for item_widget in self.preview_tree.selectedItems():
+                item_data = item_widget.data(0, Qt.UserRole)
+                if item_data and isinstance(item_data, dict):
+                    selected_preview_items_data.append(item_data)
+                else:
+                    print(f"Warning: Preview item {item_widget.text(0)} lacks expected data for batch editing.")
+
+        if not selected_preview_items_data:
+            QMessageBox.information(self, "No Items Selected", "Please select items in the preview tree to batch edit.")
+            return
+
+        if not self.normalizer:
+            QMessageBox.critical(self, "Error", "Normalizer is not available. Cannot perform batch edit.")
+            return
+
+        # --- Prevent multiple dialogs ---
+        if hasattr(self, 'batch_edit_dialog') and self.batch_edit_dialog is not None:
+            if self.batch_edit_dialog.isVisible():
+                self.batch_edit_dialog.raise_()
+                self.batch_edit_dialog.activateWindow()
+                return
+            else:
+                self.batch_edit_dialog = None  # Reset if closed
+
+        try:
+            self.batch_edit_dialog = BatchEditDialogPyQt5(
+                parent=self,
+                items=selected_preview_items_data,
+                normalizer=self.normalizer
+            )
+            # Only connect the signal ONCE per dialog instance
+            self.batch_edit_dialog.applied_batch_changes.connect(self._handle_applied_batch_changes)
+            result = self.batch_edit_dialog.exec_()
+            self.batch_edit_dialog = None  # Reset after dialog closes
+            if result == QDialog.Accepted:
+                print("Batch edit dialog accepted by user.")
+            else:
+                print("Batch edit dialog cancelled by user.")
+        except Exception as e:
+            QMessageBox.critical(self, "Batch Edit Error", f"Could not open batch edit dialog:\n{e}")
+            print(f"Error opening batch edit dialog: {e}")
+
+    def _handle_applied_batch_changes(self, changes: List[Dict[str, Any]]):
+        """
+        Handle the changes emitted from the BatchEditDialog. Adds debug prints and always forces a full preview tree refresh for UI sync.
+        """
+        print(f"[DEBUG] _handle_applied_batch_changes received: {changes}")
+        if not changes:
+            print("No changes were applied from batch edit dialog.")
+            return
+
+        selected_tree_items = self.preview_tree.selectedItems()
+        if not selected_tree_items:
+            print("No items selected in the preview tree to apply changes to.")
+            return
+            
+        print(f"Applying batch changes to {len(selected_tree_items)} items: {changes}")
+        
+        updated_item_ids = []
+        items_to_re_scan_for_sequences = False
+
+        for tree_item_widget in selected_tree_items:
+            original_item_data = tree_item_widget.data(0, Qt.UserRole)
+            if not original_item_data or not isinstance(original_item_data, dict):
+                print(f"Warning: Skipping item {tree_item_widget.text(0)} due to missing or invalid data.")
+                continue
+
+            item_id = original_item_data.get('id')
+            if not item_id:
+                print(f"Warning: Skipping item {tree_item_widget.text(0)} because it has no ID.")
+                continue
+
+            # Create a new dictionary for the modified data to avoid direct mutation issues
+            # if the original_item_data is referenced elsewhere or needs to remain pristine until a full commit.
+            modified_item_data = original_item_data.copy()
+            
+            change_applied_to_this_item = False
+            for change_instruction in changes:
+                field_to_change = change_instruction['field']
+                new_value = change_instruction['value']
+                
+                if field_to_change in modified_item_data and modified_item_data[field_to_change] == new_value:
+                    continue # No actual change for this field
+
+                modified_item_data[field_to_change] = new_value
+                change_applied_to_this_item = True
+                
+                # Check if a change might affect sequence grouping (e.g., shot_name, task_name, version_number, or filename itself)
+                # This is a heuristic; your actual sequence detection logic might depend on more specific fields.
+                if field_to_change in ["shot_name", "task_name", "version_number", "filename"]:
+                    items_to_re_scan_for_sequences = True
+            
+            if change_applied_to_this_item:
+                # Now, we need the TreeManager to handle this update.
+                # The TreeManager should internally call the normalizer to get the new display name, path, etc.
+                # and then update the tree widget item.
+                if hasattr(self.tree_manager, 'update_item_properties_and_refresh_display'):
+                    success = self.tree_manager.update_item_properties_and_refresh_display(item_id, modified_item_data)
+                    if success:
+                        updated_item_ids.append(item_id)
+                        # Update the item_data_map as well, as TreeManager might not do it directly
+                        # Or, ensure TreeManager does update its internal representation that feeds this map.
+                        self.preview_tree_item_data_map[item_id] = modified_item_data 
+                    else:
+                        print(f"Warning: Failed to update item {item_id} via TreeManager.")
+                else:
+                    print("Error: TreeManager does not have 'update_item_properties_and_refresh_display' method.")
+                    # Fallback or error message
+                    QMessageBox.critical(self, "Update Error", "TreeManager is missing a required update method.")
+                    return # Stop further processing if a critical component is missing
+            
+        if updated_item_ids:
+            # Always force a full preview tree refresh for UI sync (even if not sequence-affecting)
+            print("[DEBUG] Forcing full preview tree refresh after batch edit (UI sync).")
+            self.tree_manager.rebuild_preview_tree_from_current_data(preserve_selection=True)
+            QMessageBox.information(self, 
+                                    "Batch Edit Applied", 
+                                    f"{len(updated_item_ids)} items were updated based on your selections.")
+            self.status_manager.set_status(f"Batch edit applied to {len(updated_item_ids)} items.")
+            print(f"Batch edit successfully applied to items: {updated_item_ids}")
+        elif changes: # If changes were requested but none were applied (e.g. all values were already set)
+            QMessageBox.information(self, "No Effective Changes", "The selected batch changes did not result in any modifications to the items (values might have been the same).")
+        # If no changes were requested initially, the dialog handles it.
+
+        self._on_tree_selection_change() # Update UI based on potential changes (e.g., button states)
 
     def _on_tree_selection_change(self):
         """Handle tree selection changes."""
@@ -614,160 +1025,58 @@ class CleanIncomingsApp(QMainWindow):
         stats_text = f"Selected: {len(selected_items)} items"
         self.selection_stats_label.setText(stats_text)
 
-    # Media player methods - preserve original functionality
-    def play_with_ffplay_handler(self, media_file_path: Optional[str]):
-        """Handles the call to play a media file with ffplay."""
-        print(f"[DEBUG_FFPLAY_HANDLER] Called with media_file_path: {media_file_path}")
-        
-        if not media_file_path:
-            print(f"[DEBUG_FFPLAY_HANDLER] No media file path provided")
+    def _on_preview_item_double_clicked(self, item, column):
+        """Handle double-click on a preview tree item."""
+        # Placeholder: Show details or open file/sequence
+        # # self.logger.debug(  # (Silenced for normal use. Re-enable for troubleshooting.)f"Double-clicked on preview item: {item.text(0)} (column {column})")
+        QMessageBox.information(self, "Preview Item", f"Double-clicked: {item.text(0)}")
+
+    def _on_preview_header_clicked(self, logical_index):
+        """Handle header click for sorting columns in the preview tree."""
+        # Placeholder: Just log the event for now
+        # # self.logger.debug(  # (Silenced for normal use. Re-enable for troubleshooting.)f"Preview tree header clicked: column {logical_index}")
+        # Optionally, trigger sort logic here
+
+    def play_with_ffplay_handler(self, media_file):
+        """
+        Handle playback of a media file or sequence using ffplay via MediaPlayerUtils.
+        Accepts either a file path (string) or a sequence metadata dictionary.
+        """
+        if not media_file:
             self.status_manager.add_log_message("No media file path provided for playback.", "ERROR")
-            return
-
-        ffplay_exe_path = self.ffplay_path_var.get()
-        print(f"[DEBUG_FFPLAY_HANDLER] ffplay_exe_path from settings: {ffplay_exe_path}")
-        
-        if not ffplay_exe_path:
-            print(f"[DEBUG_FFPLAY_HANDLER] ffplay path is not configured")
-            self.status_manager.add_log_message("ffplay path is not configured in settings.", "ERROR")
-            return
-        
-        # Check if the path is for an existing file or a sequence pattern
-        if os.path.isfile(media_file_path):
-            # Regular file
-            print(f"[DEBUG_FFPLAY_HANDLER] Regular file detected")
-            print(f"[DEBUG_FFPLAY_HANDLER] Calling media_player_utils.play_with_ffplay({ffplay_exe_path}, {media_file_path})")
-            self.status_manager.add_log_message(f"Attempting to play: {media_file_path} with ffplay at {ffplay_exe_path}", "INFO")
-            
-            try:
-                result = self.media_player_utils.play_with_ffplay(ffplay_exe_path, media_file_path)
-                print(f"[DEBUG_FFPLAY_HANDLER] play_with_ffplay returned: {result}")
-                return result
-            except Exception as e:
-                print(f"[DEBUG_FFPLAY_HANDLER] Exception in play_with_ffplay: {e}")
-                import traceback
-                traceback.print_exc()
-                self.status_manager.add_log_message(f"Error launching ffplay: {e}", "ERROR")
-                return False
-        else:
-            # Likely a sequence or doesn't exist
-            print(f"[DEBUG_FFPLAY_HANDLER] Sequence or non-existent file detected: {media_file_path}")
-            
-            # Try to find selected item ID to get sequence info if available
-            try:
-                selected_items = self.preview_tree.selectedItems()
-                if selected_items and hasattr(self, 'preview_tree_item_data_map'):
-                    # In PyQt5, we'll need to get the item ID differently
-                    # For now, use a simple approach
-                    selected_item_data = None
-                    print(f"[DEBUG_FFPLAY_HANDLER] Selected item data: {selected_item_data}")
-                    
-                    # Check if it's a sequence with sequence_info
-                    if selected_item_data and selected_item_data.get('type') == 'Sequence' and selected_item_data.get('sequence_info'):
-                        seq_info = selected_item_data.get('sequence_info')
-                        print(f"[DEBUG_FFPLAY_HANDLER] Found sequence info: {seq_info}")
-                        
-                        # Prepare rich sequence data for the player
-                        sequence_data = {
-                            'base_name': seq_info.get('base_name', ''),
-                            'directory': os.path.dirname(media_file_path),
-                            'files': seq_info.get('files', []),
-                            'frame_numbers': seq_info.get('frame_numbers', []),
-                            'frame_range': seq_info.get('range', ''),
-                            'frame_count': len(seq_info.get('files', [])),
-                            'suffix': seq_info.get('suffix', '')
-                        }
-                        
-                        self.status_manager.add_log_message(f"Attempting to play sequence: {media_file_path}", "INFO")
-                        try:
-                            result = self.media_player_utils.launch_ffplay_from_sequence_data(
-                                sequence_data,
-                                frame_rate=24,
-                                window_size=(800, 600),
-                                enable_loop=True,
-                                ffplay_executable=ffplay_exe_path
-                            )
-                            print(f"[DEBUG_FFPLAY_HANDLER] launch_ffplay_from_sequence_data returned: {result}")
-                            return result is not None
-                        except Exception as e:
-                            print(f"[DEBUG_FFPLAY_HANDLER] Exception in launch_ffplay_from_sequence_data: {e}")
-                            import traceback
-                            traceback.print_exc()
-                            # Fall back to simpler method if rich sequence data fails
-            except Exception as e:
-                print(f"[DEBUG_FFPLAY_HANDLER] Error trying to get sequence info: {e}")
-            
-            # Fallback: try generic sequence detection
-            self.status_manager.add_log_message(f"Attempting to play sequence: {media_file_path} with ffplay", "INFO")
-            try:
-                result = self.media_player_utils.play_sequence(
-                    media_file_path, 
-                    frame_rate=24, 
-                    window_size=(800, 600),
-                    enable_loop=True,
-                    ffplay_executable=ffplay_exe_path
-                )
-                print(f"[DEBUG_FFPLAY_HANDLER] play_sequence returned: {result}")
-                return result is not None
-            except Exception as e:
-                print(f"[DEBUG_FFPLAY_HANDLER] Exception in play_sequence: {e}")
-                import traceback
-                traceback.print_exc()
-                self.status_manager.add_log_message(f"Error launching ffplay for sequence: {e}", "ERROR")
-                return False
-
-    def play_with_mpv_handler(self, media_file_path: Optional[str]):
-        """Handles the call to play a media file or sequence with MPV via launch_mpv_subprocess."""
-        print(f"[DEBUG_MPV_HANDLER] Called with media_file_path: {media_file_path}")
-        
-        if not media_file_path:
-            print(f"[DEBUG_MPV_HANDLER] No media file path provided for MPV.")
-            self.status_manager.add_log_message("No media file path provided for MPV playback.", "ERROR")
             return False
-
-        if not hasattr(self, 'media_player_utils') or not hasattr(self.media_player_utils, 'launch_mpv_subprocess'):
-            print(f"[DEBUG_MPV_HANDLER] MediaPlayerUtils or launch_mpv_subprocess not available.")
-            self.status_manager.add_log_message("MPV playback utility is not available.", "ERROR")
-            return False
-
-        path_to_play = media_file_path # Default to the provided path
-
-        # Check if it's a sequence by looking at the selected item's data
-        selected_items = self.preview_tree.selectedItems()
-        if selected_items and hasattr(self, 'preview_tree_item_data_map'):
-            # In PyQt5, we'll need to implement this differently
-            # For now, use the provided path directly
-            pass
-        
-        print(f"[DEBUG_MPV_HANDLER] Attempting to play with MPV: {path_to_play}")
-        self.status_manager.add_log_message(f"Attempting to play with MPV: {os.path.basename(path_to_play)}", "INFO")
-        
         try:
-            process = self.media_player_utils.launch_mpv_subprocess(path_to_play)
-            if process:
-                print(f"[DEBUG_MPV_HANDLER] MPV subprocess launched successfully (PID: {process.pid}).")
-                return True # Indicates successful launch attempt
+            result = self.media_player_utils.play_with_ffplay_handler(media_file)
+            if not result:
+                self.status_manager.add_log_message("Playback failed or was not launched.", "ERROR")
+            return result
+        except Exception as e:
+            self.status_manager.add_log_message(f"Playback error: {e}", "ERROR")
+            return False
+
+    def play_with_vlc_handler(self, media_file):
+        """
+        Handle playback of a media file or sequence using VLC via MediaPlayerUtils (if available).
+        Accepts either a file path (string) or a sequence metadata dictionary.
+        """
+        if not self.vlc_module_available:
+            QMessageBox.warning(self, "VLC Playback", "VLC module is not available.")
+            return False
+        if not media_file:
+            self.status_manager.add_log_message("No media file path provided for VLC playback.", "ERROR")
+            return False
+        try:
+            if hasattr(self.media_player_utils, 'play_with_vlc_handler'):
+                result = self.media_player_utils.play_with_vlc_handler(media_file)
             else:
-                print(f"[DEBUG_MPV_HANDLER] Failed to launch MPV subprocess (process is None).")
-                self.status_manager.add_log_message(f"Failed to launch MPV for: {os.path.basename(path_to_play)}", "ERROR")
+                QMessageBox.warning(self, "VLC Playback", "VLC playback handler is not implemented in MediaPlayerUtils.")
                 return False
+            if not result:
+                self.status_manager.add_log_message("VLC playback failed or was not launched.", "ERROR")
+            return result
         except Exception as e:
-            print(f"[DEBUG_MPV_HANDLER] Exception during MPV launch: {e}")
-            import traceback
-            traceback.print_exc()
-            self.status_manager.add_log_message(f"Error launching MPV: {e}", "ERROR")
+            self.status_manager.add_log_message(f"VLC playback error: {e}", "ERROR")
             return False
-
-    def closeEvent(self, event):
-        """Handle application closing - save current state."""
-        try:
-            self.settings_manager.save_current_state()
-            print("Settings saved successfully")
-        except Exception as e:
-            print(f"Error saving settings: {e}")
-        finally:
-            event.accept()
-
 
 if __name__ == '__main__':
     # Enable High DPI support for better display scaling
@@ -779,7 +1088,7 @@ if __name__ == '__main__':
     # Apply the Nuke-inspired dark theme
     apply_nuke_theme(app)
     
-    window = CleanIncomingsApp()
+    window = CleanIncomingsApp(qt_app=app)
     window.show()
     
     sys.exit(app.exec_())

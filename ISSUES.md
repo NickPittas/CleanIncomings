@@ -29,7 +29,7 @@ The following files are central to the PyQt5 conversion and will be systematical
     *   **Status:** Pending Analysis.
 7.  **New:** `python/gui_components/vlc_player_window_pyqt5.py` (or similar for media playback)
     *   **Original:** `python/gui_components/vlc_player_window.py`
-    *   **Status:** Pending Analysis.
+    *   **Status:** Analysis moved to ISSUES_2.md.
 8.  **New:** `python/gui_components/tree_manager_pyqt5.py`
     *   **Original:** `python/gui_components/tree_manager.py`
     *   **Status:** Pending Analysis.
@@ -490,7 +490,7 @@ These files likely underwent modifications or have new adapters/versions. Each n
     *   **Status:** Resolved
 
 *   **Issue 2.C.10: `create_frame` (PyQt5) vs. `ctk.CTkFrame` (Tkinter)**
-    *   **Original:** `ctk.CTkFrame` was used extensively for layout and grouping.
+    *   **Original:** `ctk.CTkFrame` used extensively for layout and grouping.
     *   **PyQt5:** `create_frame` creates a basic `QFrame`. Can set `object_name`.
     *   **Discrepancy/Issue:** `QFrame` is a basic container. For titled groups, `create_group_box` is preferred. This generic `create_frame` is fine for simple non-styled containers.
     *   **Required Action:** Ensure it's used appropriately where a simple `QFrame` is needed, and `QGroupBox` is used for titled sections.
@@ -624,13 +624,6 @@ The original `WidgetFactory` had methods like `_select_source_folder`, `_select_
     *   **Priority:** Medium
     *   **Status:** Open
 
-*   **Issue 3.S.3: Placeholder for Profile Management Tab**
-    *   **Context:** The "Profile Management" tab is currently a placeholder.
-    *   **Discrepancy/Issue:** Core functionality for user-friendly profile management (list, add, edit, delete) is missing.
-    *   **Required Action:** Implement the Profile Management tab UI and logic, interacting with `SettingsManager` or `ConfigManager` for profile data. This might involve integrating `profile_editor_pyqt5.py`.
-    *   **Priority:** High (assuming this was a feature in the original application)
-    *   **Status:** Open
-
 *   **Issue 3.S.4: Theme Management Integration**
     *   **Context:** The theme combobox in the "Appearance" tab has hardcoded placeholder items.
     *   **Discrepancy/Issue:** Does not integrate with a dynamic `ThemeManager`.
@@ -643,6 +636,193 @@ The original `WidgetFactory` had methods like `_select_source_folder`, `_select_
     *   **Discrepancy/Issue:** May lead to inconsistencies if these values are defined or need to be managed elsewhere.
     *   **Required Action:** Ensure these defaults and ranges are sensible. If they are (or should be) defined as constants or defaults within the `SettingsManager` or a global application config, prefer using those definitions to maintain a single source of truth.
     *   **Priority:** Low
+    *   **Status:** Open
+
+---
+
+### 4. GUI Components: `python/gui_components/json_editors/patterns_editor_window_pyqt5.py` vs `python/gui_components/json_editors/patterns_editor_window.py`
+
+#### A. Core Functionality and UI Structure
+*   **Issue 4.A.1: UI Framework and Window Management**
+    *   **Context:** Transition from Tkinter/CustomTkinter to PyQt5.
+    *   **Discrepancy/Issue:** PyQt5 uses `QDialog` (non-modal) with improved window positioning. Tkinter used `ctk.CTkToplevel`. This is a standard framework change.
+    *   **Required Action:** None.
+    *   **Priority:** N/A
+    *   **Status:** Resolved
+
+*   **Issue 4.A.2: Tab Implementation and Modularity**
+    *   **Context:** Both versions use a tabbed interface for different pattern categories.
+    *   **Discrepancy/Issue:**
+        *   **Tkinter:** Employed separate classes (`SimplePatternsTab`, `TaskPatternsTab`) for tab content, promoting modularity.
+        *   **PyQt5:** Builds the UI for each tab type directly within methods of `PatternsEditorWindowPyQt5` (`create_simple_pattern_tab`, `create_task_patterns_tab`). This makes the main window class larger.
+    *   **Required Action:** Consider if refactoring the PyQt5 tab creation into separate classes (similar to Tkinter) would improve maintainability, especially for complex tabs. For now, it's a structural difference.
+    *   **Priority:** Low (Refactoring consideration)
+    *   **Status:** Open
+
+#### B. Editing Simple List-Based Patterns (shotPatterns, resolutionPatterns, etc.)
+*   **Issue 4.B.1: UI for Simple Patterns**
+    *   **Context:** Displaying and managing lists of regex patterns.
+    *   **Discrepancy/Issue:**
+        *   **Tkinter:** Relied on `SimplePatternsTab` class.
+        *   **PyQt5:** Uses `QListWidget` (items are editable via `Qt.ItemIsEditable`). Includes "Add Pattern" and "Remove Selected" buttons.
+    *   **Enhancement (PyQt5):** The PyQt5 version features a significant enhancement: an integrated "Pattern Editor" panel within each simple pattern tab. This panel includes:
+        *   A `QLineEdit` for entering/editing a pattern.
+        *   A live regex test area with a `QLineEdit` for test input and a `QLabel` for test results (match, no match, regex error, with color-coded feedback).
+    *   **Required Action:** None. The PyQt5 version offers superior usability here.
+    *   **Priority:** N/A (Enhancement)
+    *   **Status:** Resolved
+
+#### C. Editing Task Patterns (Dictionary-Based)
+*   **Issue 4.C.1: UI for Task Patterns**
+    *   **Context:** Managing a dictionary where keys are task categories and values are lists of keywords.
+    *   **Discrepancy/Issue:**
+        *   **Tkinter:** Relied on `TaskPatternsTab` class.
+        *   **PyQt5:** Uses two `QListWidget`s (one for categories, one for keywords of the selected category). Categories can be made editable. Provides buttons to add/remove categories and add/remove keywords.
+    *   **Required Action:** The PyQt5 implementation is functional. Ensure in-place editing of category names in the `QListWidget` is correctly saved.
+    *   **Priority:** Low
+    *   **Status:** Open
+
+#### D. Data Handling (Loading, Saving, In-UI Changes)
+*   **Issue 4.D.1: Data Loading**
+    *   **Context:** Loading `patterns.json`.
+    *   **Discrepancy/Issue:** Both load from `patterns.json` and use defaults if the file is missing. PyQt5 version has slightly more explicit default key checking.
+    *   **Required Action:** None.
+    *   **Priority:** N/A
+    *   **Status:** Resolved
+
+*   **Issue 4.D.2: Data Saving and UI Data Collection**
+    *   **Context:** Saving changes back to `patterns.json`.
+    *   **Discrepancy/Issue:**
+        *   **Tkinter:** Relied on individual tab classes updating a shared `self.patterns_data` dictionary, which was then saved. Used `shared_utils.clean_patterns_data`.
+        *   **PyQt5:** Has a `collect_patterns_from_ui()` method that reads data directly from all UI widgets (e.g., `QListWidget` items) when "Save" is clicked. This makes the UI the source of truth at save time.
+    *   **Potential Issue (PyQt5):** The `collect_patterns_from_ui()` method for "taskPatterns" appears to incorrectly re-fetch keyword lists from the initially loaded `self.patterns_data` instead of the live `self.task_keywords_list` UI element for each category. This would mean UI edits to keywords might not be saved.
+    *   **Missing Feature (PyQt5):** The PyQt5 version does not appear to use an equivalent of Tkinter's `shared_utils.clean_patterns_data` before saving. This could be a regression if that utility performed important cleaning (e.g., removing empty strings, ensuring type correctness).
+    *   **Required Action:**
+        1.  **Critical:** Correct the `collect_patterns_from_ui()` method in the PyQt5 version to accurately gather keywords for task patterns from the `self.task_keywords_list` UI element.
+        2.  Investigate what `shared_utils.clean_patterns_data` did in the Tkinter version and implement equivalent data cleaning in the PyQt5 `save_patterns` or `collect_patterns_from_ui` method if necessary.
+    *   **Priority:** Critical (for task pattern saving), Medium (for data cleaning)
+    *   **Status:** Open
+
+*   **Issue 4.D.3: Signal on Save**
+    *   **Context:** Notifying other parts of the application that patterns have changed.
+    *   **Discrepancy/Issue:** PyQt5 version emits a `patterns_changed` signal, which is good practice. Tkinter used a direct callback.
+    *   **Required Action:** None.
+    *   **Priority:** N/A
+    *   **Status:** Resolved
+
+#### E. Error Handling and User Feedback
+*   **Issue 4.E.1: User Messages**
+    *   **Context:** Informing the user about success or failure of operations.
+    *   **Discrepancy/Issue:** PyQt5 uses `QMessageBox`, which is appropriate. The live regex test area in PyQt5 provides excellent immediate feedback.
+    *   **Required Action:** None.
+    *   **Priority:** N/A
+    *   **Status:** Resolved
+
+---
+
+### 9. Core Logic: `python/scan_manager.py` (PyQt5) vs `python/scan_manager_tkinter_backup.py`
+
+*   **Note:** The file `python/scan_manager.py` is assumed to be the PyQt5-compatible version, despite not having `_pyqt5` in its filename, as it imports `PyQt5.QtCore.QTimer`.
+
+#### A. Initialization and Core Attributes
+*   **Issue 9.A.1: Basic Initialization**
+    *   **Context:** Both classes initialize `app_instance`, `result_queue`, and `scan_thread`.
+    *   **Discrepancy/Issue:** No significant differences in the constructor or core attributes.
+    *   **Required Action:** None.
+    *   **Priority:** N/A
+    *   **Status:** Resolved
+
+#### B. Scan Initiation (`on_scan_button_click`, `refresh_scan_data`)
+*   **Issue 9.B.1: Input Validation and UI Feedback**
+    *   **Context:** Checking for source path, profile name, and destination root before starting a scan.
+    *   **Discrepancy/Issue:**
+        *   Both versions perform similar checks.
+        *   **Tkinter:** Called `self.app.status_label.configure(text=...)` for error messages.
+        *   **PyQt5:** Calls `self.app.status_label.setText(...)` for error messages.
+        *   **Tkinter:** Had a separate `_validate_scan_inputs` method which was called from both `on_scan_button_click` and `refresh_scan_data`. This method also updated the status label.
+        *   **PyQt5:** Integrates input validation directly within `on_scan_button_click`. The `refresh_scan_data` method is a simple alias to `on_scan_button_click`.
+    *   **Required Action:** The PyQt5 approach is slightly less DRY by not having a separate validation method, but functionally similar. No immediate action required, but could consider re-introducing a private validation method if `refresh_scan_data` were to diverge.
+    *   **Priority:** Low
+    *   **Status:** Resolved
+
+*   **Issue 9.B.2: Progress System and UI State**
+    *   **Context:** Managing UI state during scan (e.g., disabling buttons, starting progress indicators).
+    *   **Discrepancy/Issue:**
+        *   Both versions call `self.app.status_manager.start_scan_progress()`.
+        *   **Tkinter:** Disabled the refresh button using `self.app.refresh_btn.configure(state=tk.DISABLED)` in `refresh_scan_data`.
+        *   **PyQt5:** Disables the refresh button using `self.app.refresh_btn.setEnabled(False)` in `on_scan_button_click`.
+        *   **Tkinter:** Cleared previous preview tree results directly in `on_scan_button_click`.
+        *   **PyQt5:** Does not explicitly clear preview tree results in `on_scan_button_click`; this is likely handled by `TreeManager.populate_preview_tree` when new results arrive.
+    *   **Required Action:** Ensure that the `TreeManager.populate_preview_tree` in the PyQt5 version correctly clears old data before adding new items.
+    *   **Priority:** Low
+    *   **Status:** Open
+
+*   **Issue 9.B.3: Threading and Queue Check Scheduling**
+    *   **Context:** Starting the scan worker thread and scheduling queue checks.
+    *   **Discrepancy/Issue:**
+        *   Both use `threading.Thread` for the `_scan_worker`.
+        *   **Tkinter:** Used `self.app.after(100, self._check_scan_queue)`.
+        *   **PyQt5:** Calls `self._check_scan_queue()` directly once, which then uses `QTimer.singleShot(100, self._check_scan_queue)` for subsequent checks.
+    *   **Required Action:** None. PyQt5 adaptation is correct.
+    *   **Priority:** N/A
+    *   **Status:** Resolved
+
+#### C. Scan Worker (`_scan_worker`)
+*   **Issue 9.C.1: Normalizer Interaction and Status Callback**
+    *   **Context:** Calling `self.app.normalizer.scan_and_normalize_structure`.
+    *   **Discrepancy/Issue:**
+        *   **Tkinter:** Passed `self._schedule_general_adapter_processing` as the `status_callback`.
+        *   **PyQt5:** Passes `self.update_scan_status` as the `status_callback`.
+        *   **Tkinter:** Applied thread settings to `self.app.normalizer.scanner` directly within `_scan_worker` before calling `scan_and_normalize_structure`.
+        *   **PyQt5:** Does not show this explicit application of thread settings within `_scan_worker`. This is likely handled elsewhere (e.g., when settings are changed via `SettingsManager`).
+    *   **Required Action:** Verify that scanner thread settings are indeed applied correctly to the normalizer/scanner before a scan operation in the PyQt5 workflow.
+    *   **Priority:** Medium
+    *   **Status:** Open
+
+*   **Issue 9.C.2: Result Handling**
+    *   **Context:** Placing results or errors onto the `result_queue`.
+    *   **Discrepancy/Issue:** Both versions put a dictionary with `type` (`final_success` or `final_error`) and `data` onto the queue. The structure of the success data seems consistent.
+    *   **Required Action:** None.
+    *   **Priority:** N/A
+    *   **Status:** Resolved
+
+#### D. Queue Checking and UI Updates (`_check_scan_queue`)
+*   **Issue 9.D.1: Processing Successful Scan Results**
+    *   **Context:** Updating source and preview trees with scan results.
+    *   **Discrepancy/Issue:**
+        *   Both versions retrieve `original_scan_tree` and `proposals` from the result data.
+        *   Both call `self.app.tree_manager.populate_source_tree` and `self.app.tree_manager.populate_preview_tree`.
+        *   Status label updates are adapted for Tkinter (`.configure(text=...)`) vs PyQt5 (`.setText(...)`).
+        *   Both call `self.app.status_manager.finish_scan_progress(True)`.
+    *   **Required Action:** None.
+    *   **Priority:** N/A
+    *   **Status:** Resolved
+
+*   **Issue 9.D.2: Processing Scan Errors**
+    *   **Context:** Handling errors reported from the `_scan_worker`.
+    *   **Discrepancy/Issue:** Logic is very similar: update status label, print error, call `self.app.status_manager.finish_scan_progress(False, error_data)`.
+    *   **Required Action:** None.
+    *   **Priority:** N/A
+    *   **Status:** Resolved
+
+*   **Issue 9.D.3: Re-enabling UI Elements**
+    *   **Context:** Re-enabling the refresh button after scan completion or error.
+    *   **Discrepancy/Issue:**
+        *   **Tkinter:** `self.app.refresh_btn.configure(state=tk.NORMAL)`.
+        *   **PyQt5:** `self.app.refresh_btn.setEnabled(True)`.
+    *   **Required Action:** None. Correct adaptation.
+    *   **Priority:** N/A
+    *   **Status:** Resolved
+
+#### E. Status Update Callbacks (`update_scan_status`, `_schedule_general_adapter_processing`)
+*   **Issue 9.E.1: Thread-Safe UI Updates for Scan Progress**
+    *   **Context:** Updating the status label with the currently scanned path from the worker thread.
+    *   **Discrepancy/Issue:**
+        *   **Tkinter:** `update_scan_status` used `self.app.after(0, lambda path=display_path: self.app.status_label.configure(text=...))`.
+        *   **PyQt5:** `update_scan_status` uses `QTimer.singleShot(0, lambda path=display_path: self.app.status_label.setText(...))`.
+        *   The Tkinter version also had `_schedule_general_adapter_processing` which called `self.app.status_manager.process_adapter_status` via `self.app.after(0, ...)`. This specific callback is not directly present in the PyQt5 `ScanManager` and its functionality might have been merged into `update_scan_status` or handled differently by the PyQt5 `StatusManager`.
+    *   **Required Action:** Confirm if the functionality of `_schedule_general_adapter_processing` (which likely handled more detailed progress updates beyond just the path) is adequately covered by the PyQt5 `update_scan_status` and `StatusManagerPyQt5` interaction, or if some progress reporting granularity was lost.
+    *   **Priority:** Medium
     *   **Status:** Open
 
 ---

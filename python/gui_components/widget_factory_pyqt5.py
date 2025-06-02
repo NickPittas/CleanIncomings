@@ -23,41 +23,83 @@ class WidgetFactory:
     
     def __init__(self, app):
         self.app = app
-        self.icon_cache = {}
+        self.icon_cache: Dict[str, QIcon] = {}
+        # Ensure your main app instance (self.app) has a theme_manager attribute
+        # that is an instance of ThemeManagerPyQt5 or a similar class.
+        if hasattr(self.app, 'theme_manager'):
+            self.theme_manager = self.app.theme_manager
+            # self.app.logger.info("WidgetFactory initialized with ThemeManager.")  # (Silenced for normal use. Re-enable for troubleshooting.)
+        else:
+            self.theme_manager = None # Fallback if not present
+            self.app.logger.warning("WidgetFactory initialized WITHOUT ThemeManager. Icon loading will be limited.")
+        # _load_icons can be used for pre-caching, but primary loading is on-demand via get_icon
         self._load_icons()
-        
+
     def _load_icons(self):
-        """Load and cache icons for reuse."""
-        icons_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "icons")
-        
-        icon_files = {
-            'folder': 'folder_open_16.png',
-            'folder_closed': 'folder_closed_16.png',
-            'file': 'file_16.png',
-            'sequence': 'sequence_16.png',
-            'image': 'image_16.png',
-            'video': 'video_16.png',
-            'audio': 'audio_16.png',
-            'settings': 'settings_16.png',
-            'refresh': 'refresh_16.png',
-            'task': 'task_16.png',
-            'asset': 'asset_16.png',
-            'arrow_up': 'arrow_up_16.png',
-            'arrow_down': 'arrow_down_16.png',
-            'arrow_right': 'arrow_right_16.png'
-        }
-        
-        for icon_name, icon_file in icon_files.items():
-            icon_path = os.path.join(icons_dir, icon_file)
-            if os.path.exists(icon_path):
-                self.icon_cache[icon_name] = QIcon(icon_path)
-            else:
-                # Create empty icon as fallback
-                self.icon_cache[icon_name] = QIcon()
+        """
+        Pre-loads a defined set of common icons if specified.
+        Currently, icon loading is primarily on-demand via get_icon.
+        """
+        # Example of pre-loading specific icons (optional):
+        # self.get_icon('folder')
+        # self.get_icon('file')
+        # self.app.logger.debug("WidgetFactory: _load_icons called. On-demand loading in get_icon is preferred.")  # (Silenced for normal use. Re-enable for troubleshooting.)
     
-    def get_icon(self, icon_name: str) -> QIcon:
-        """Get a cached icon by name."""
-        return self.icon_cache.get(icon_name, QIcon())
+    def get_icon(self, icon_name: str, default_icon_name: str = 'file') -> QIcon:
+        """
+        Retrieves a QIcon by its logical name.
+        Uses ThemeManager to get the actual icon path and caches the QIcon.
+
+        Args:
+            icon_name: The logical name of the icon (e.g., 'folder', 'sequence', 'error').
+            default_icon_name: The name of the icon to use if the requested one isn't found.
+                               Defaults to 'file'.
+
+        Returns:
+            A QIcon instance. Returns a default icon if the requested one is not found or errors occur.
+            Returns an empty QIcon if the default also fails.
+        """
+        if not icon_name:
+            self.app.logger.warning("get_icon called with empty icon_name, attempting to use default: '{}'".format(default_icon_name))
+            icon_name = default_icon_name
+
+        if icon_name in self.icon_cache:
+            return self.icon_cache[icon_name]
+
+        try:
+            if self.theme_manager:
+                # Assuming theme_manager.get_icon_path(icon_name) returns a valid path or None
+                icon_path = self.theme_manager.get_icon_path(icon_name)
+
+                if icon_path and os.path.exists(icon_path):
+                    pixmap = QPixmap(icon_path)
+                    if not pixmap.isNull():
+                        icon = QIcon(pixmap)
+                        self.icon_cache[icon_name] = icon
+                        # self.app.logger.debug("Icon '{}' loaded and cached from: {}".format(icon_name, icon_path))
+                        return icon
+                    else:
+                        self.app.logger.error("Failed to load pixmap for icon '{}' from path: {}".format(icon_name, icon_path))
+                elif icon_path: # Path was returned but doesn't exist
+                    self.app.logger.warning("Icon path for '{}' does not exist: {}".format(icon_name, icon_path))
+                else: # theme_manager returned None for the icon_name
+                    self.app.logger.warning("No icon path found by ThemeManager for icon name: '{}'".format(icon_name))
+            else:
+                self.app.logger.warning("ThemeManager not available in WidgetFactory. Cannot load icon: '{}'".format(icon_name))
+
+        except Exception as e:
+            self.app.logger.error("Error loading icon '{}': {}".format(icon_name, e), exc_info=True)
+
+        # Fallback logic
+        if icon_name != default_icon_name:
+            self.app.logger.warning("Falling back to default icon '{}' for '{}'.".format(default_icon_name, icon_name))
+            # Crucially, ensure the recursive call for the default has a different default
+            # or a mechanism to prevent infinite loops if 'file' itself is problematic.
+            return self.get_icon(default_icon_name, 'file_generic') # Using a more generic default for the fallback's fallback
+        else:
+            # This means the original request was for the default_icon_name, and it failed.
+            self.app.logger.error("Default icon '{}' also failed to load. Returning empty QIcon.".format(default_icon_name))
+            return QIcon() # Return an empty icon as a last resort
 
     def create_widgets(self):
         """Create all widgets - this method maintains compatibility with the tkinter version."""
@@ -201,11 +243,12 @@ class WidgetFactory:
         """Create the source tree widget with proper configuration."""
         tree = QTreeWidget()
         tree.setHeaderLabels(["Name", "Type", "Size"])
-        tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
-        tree.header().setSectionResizeMode(1, QHeaderView.Fixed)
-        tree.header().setSectionResizeMode(2, QHeaderView.Fixed)
+        tree.header().setSectionResizeMode(0, QHeaderView.Interactive)
+        tree.header().setSectionResizeMode(1, QHeaderView.Interactive)
+        tree.header().setSectionResizeMode(2, QHeaderView.Interactive)
         tree.header().resizeSection(1, 80)
         tree.header().resizeSection(2, 80)
+        tree.setSortingEnabled(True)
         
         # Add compatibility methods
         def get_children():
@@ -227,22 +270,35 @@ class WidgetFactory:
     def create_preview_tree(self) -> QTreeWidget:
         """Create the preview tree widget with proper configuration."""
         tree = QTreeWidget()
-        tree.setHeaderLabels(["☐", "File/Sequence Name", "Task", "Asset", "New Destination Path", "Matched Tags"])
-        tree.header().setSectionResizeMode(0, QHeaderView.Fixed)
-        tree.header().setSectionResizeMode(1, QHeaderView.Fixed)
-        tree.header().setSectionResizeMode(2, QHeaderView.Fixed)
-        tree.header().setSectionResizeMode(3, QHeaderView.Fixed)
-        tree.header().setSectionResizeMode(4, QHeaderView.Stretch)
-        tree.header().setSectionResizeMode(5, QHeaderView.Fixed)
-        
+        # Set up 9 columns to match the data model and column constants in tree_manager_pyqt5.py
+        tree.setColumnCount(9)
+        tree.setHeaderLabels([
+            "Filename",        # 0
+            "Size",            # 1
+            "Type",            # 2
+            "Task",            # 3
+            "Asset",           # 4
+            "Version",         # 5
+            "Resolution",      # 6
+            "Destination Path",# 7
+            "Matched Tags"     # 8
+        ])
+        # Configure section resize modes for all columns
+        for col in range(9):
+            tree.header().setSectionResizeMode(col, QHeaderView.Interactive)
         # Set column widths
-        tree.header().resizeSection(0, 40)   # Checkbox
-        tree.header().resizeSection(1, 200)  # Filename
-        tree.header().resizeSection(2, 80)   # Task
-        tree.header().resizeSection(3, 80)   # Asset
-        tree.header().resizeSection(5, 150)  # Tags
-        
+        tree.header().resizeSection(0, 200)  # Filename
+        tree.header().resizeSection(1, 80)   # Size
+        tree.header().resizeSection(2, 80)   # Type
+        tree.header().resizeSection(3, 80)   # Task
+        tree.header().resizeSection(4, 80)   # Asset
+        tree.header().resizeSection(5, 80)   # Version
+        tree.header().resizeSection(6, 80)   # Resolution
+        tree.header().resizeSection(7, 200)  # Destination Path
+        tree.header().resizeSection(8, 150)  # Matched Tags
         tree.setSelectionMode(QTreeWidget.ExtendedSelection)
+        tree.setSortingEnabled(True)
+        # Note: If you want checkboxes, use setCheckState on the Filename column items.
         
         # Add compatibility methods
         def get_children():

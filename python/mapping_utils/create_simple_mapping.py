@@ -46,7 +46,7 @@ def create_simple_mapping(
                 "error_message": "Missing filename in node"
             }
 
-        print(f"[OPTIMIZED] Processing individual file: '{filename}'", file=sys.stderr)
+        # print(f"[OPTIMIZED] Processing individual file: '{filename}'", file=sys.stderr)  # (Silenced for normal use. Re-enable for troubleshooting.)
 
         # OPTIMIZATION: Extract all patterns at once using cached extraction
         # This single call replaces multiple individual extract_*_simple calls
@@ -70,7 +70,7 @@ def create_simple_mapping(
             asset = pattern_results['asset']
             stage = pattern_results['stage']
             
-            print(f"[OPTIMIZED] Cached extraction results for '{filename}': shot={shot}, task={task}, version={version}, resolution={resolution}, asset={asset}, stage={stage}", file=sys.stderr)
+            # print(f"[OPTIMIZED] Cached extraction results for '{filename}': shot={shot}, task={task}, version={version}, resolution={resolution}, asset={asset}, stage={stage}", file=sys.stderr)  # (Silenced for normal use. Re-enable for troubleshooting.)
         else:
             # Fallback to individual extraction functions if patterns not provided
             print(f"[FALLBACK] Using individual extraction functions for '{filename}'", file=sys.stderr)
@@ -126,7 +126,7 @@ def create_simple_mapping(
             "ambiguous_options": []
         }
 
-        print(f"[OPTIMIZED] Created file proposal: {filename} -> {target_path}", file=sys.stderr)
+        # print(f"[OPTIMIZED] Created file proposal: {filename} -> {target_path}", file=sys.stderr)  # (Silenced for normal use. Re-enable for troubleshooting.)
         return file_proposal
 
     except Exception as e:

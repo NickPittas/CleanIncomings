@@ -32,7 +32,7 @@ def extract_task_simple(filename: str, source_path: str, task_patterns: Dict[str
                 match = compiled_pattern.search(filename)
                 if match:
                     matched_value = match.group(0)
-                    print(f"[TASK_EXTRACTOR MATCH] Regex Pattern: '{pattern_str}', File: '{filename}', Task: '{task}', Matched: '{matched_value}'", file=sys.stderr, flush=True)
+                    # print(f"[TASK_EXTRACTOR MATCH] Regex Pattern: '{pattern_str}', File: '{filename}', Task: '{task}', Matched: '{matched_value}'", file=sys.stderr, flush=True)  # (Silenced for normal use. Re-enable for troubleshooting.)
                     return task
                 # else:
                 #     print(f"[TASK_EXTRACTOR DEBUG] Regex Pattern: '{pattern_str}' for task '{task}' - NO MATCH on '{filename}'", file=sys.stderr, flush=True)
@@ -40,7 +40,7 @@ def extract_task_simple(filename: str, source_path: str, task_patterns: Dict[str
                 # print(f"[TASK_EXTRACTOR INFO] Pattern '{pattern_str}' for task '{task}' is not valid regex. Trying as simple string.", file=sys.stderr, flush=True)
                 # print(f"[TASK_EXTRACTOR DEBUG] Trying pattern (simple string): '{pattern_str}' for task '{task}' on '{filename}'", file=sys.stderr, flush=True)
                 if pattern_str.lower() in filename.lower():
-                    print(f"[TASK_EXTRACTOR MATCH] Simple String: '{pattern_str}', File: '{filename}', Task: '{task}'", file=sys.stderr, flush=True)
+                    # print(f"[TASK_EXTRACTOR MATCH] Simple String: '{pattern_str}', File: '{filename}', Task: '{task}'", file=sys.stderr, flush=True)  # (Silenced for normal use. Re-enable for troubleshooting.)
                     return task
                 # else:
                 #     print(f"[TASK_EXTRACTOR DEBUG] Simple String Pattern: '{pattern_str}' for task '{task}' - NO MATCH on '{filename}'", file=sys.stderr, flush=True)

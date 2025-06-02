@@ -55,22 +55,16 @@ class FileSystemScanner:
     def get_scan_progress(self, batch_id: str) -> Dict[str, Any]:
         """Reads and returns the progress data for a given batch_id from its JSON file."""
         progress_file = self._progress_path(batch_id)
-        print(f"[DEBUG][get_scan_progress] Attempting to read: {progress_file}", flush=True)
         try:
             if os.path.exists(progress_file):
-                print(f"[DEBUG][get_scan_progress] File exists: {progress_file}", flush=True)
                 with open(progress_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                    print(f"[DEBUG][get_scan_progress] Loaded data: {data}", flush=True)
                     return data
             else:
-                print(f"[DEBUG][get_scan_progress] File NOT found: {progress_file}. Returning 'pending'.", flush=True)
                 return {"batchId": batch_id, "status": "pending", "progressPercentage": 0, "result": None}
         except json.JSONDecodeError as e_json:
-            print(f"[DEBUG][get_scan_progress] JSONDecodeError for {progress_file}: {e_json}. Returning 'failed'.", flush=True)
             return {"batchId": batch_id, "status": "failed", "result": {"error": f"Malformed progress file: {e_json}"}}
         except Exception as e:
-            print(f"[DEBUG][get_scan_progress] Exception for {progress_file}: {e}. Returning 'failed'.", flush=True)
             return {"batchId": batch_id, "status": "failed", "result": {"error": f"Error reading progress file: {e}"}}
 
     def _write_progress(self, batch_id: str, progress: Dict[str, Any]):
@@ -88,14 +82,12 @@ class FileSystemScanner:
         max_files: int = None,
         use_fast_scan: bool = True,
     ) -> str:
-        print("[DEBUG][SCANNER] Entered scan_directory_with_progress", file=sys.stderr)
         sys.stderr.flush()
 
         if batch_id is None:
             batch_id = str(uuid.uuid4())
-            print(f"[DEBUG][SCANNER] scan_directory_with_progress: No batch_id provided, generated new: {batch_id}", file=sys.stderr)
         else:
-            print(f"[DEBUG][SCANNER] scan_directory_with_progress: Using provided batch_id: {batch_id}", file=sys.stderr)
+            pass
         sys.stderr.flush()
 
         self._scan_start_time = time.time()
@@ -214,15 +206,9 @@ class FileSystemScanner:
             update_progress()
             progress["status"] = "building_tree"
             self._write_progress(batch_id, progress)
-            print(
-                f"[DEBUG] Scan loop completed. Files: {self.file_count}, Folders: {self.folder_count}",
-                file=sys.stderr,
-            )
             
             files = [Path(fp) for fp in file_paths]
-            print(f"[DEBUG] Building tree from {len(files)} files...", file=sys.stderr)
             tree = self._build_tree_from_files(root_path, files, folders_only=True)
-            print(f"[DEBUG] Tree built successfully", file=sys.stderr)
             
             stats = {
                 "total_files": self.file_count,
@@ -237,8 +223,7 @@ class FileSystemScanner:
             progress["progressPercentage"] = 100.0
             progress["estimatedTotalFiles"] = self.file_count  # Update with actual count
             self._write_progress(batch_id, progress)
-            
-            print(f"[DEBUG] Progress written to file", file=sys.stderr)
+        
         except Exception as e:
             print(f"Scan failed: {e}", file=sys.stderr)
             progress["status"] = "failed"
@@ -246,10 +231,6 @@ class FileSystemScanner:
             progress["progressPercentage"] = 100.0 # Indicate completion, albeit failed
             self._write_progress(batch_id, progress)
         
-        print(
-            f"[DEBUG] scan_directory_with_progress: completed, returning batch_id={batch_id}",
-            file=sys.stderr,
-        )
         return batch_id
 
     def get_scan_progress(self, batch_id: str) -> Dict[str, Any]:
@@ -495,7 +476,6 @@ class FileSystemScanner:
             self.folder_count = len(dir_paths)
             
             # Build tree from collected files
-            print(f"Building tree from {len(files)} files, {len(dirs)} directories...", file=sys.stderr)
             return self._build_tree_from_files(path, files, folders_only=True, directories=dirs)
         except Exception as e:
             print(
@@ -626,7 +606,6 @@ class FileSystemScanner:
     def _build_tree_from_files(
         self, root_path: Path, files: List[Path], folders_only: bool = False, directories: List[Path] = None
     ) -> Dict[str, Any]:
-        print(f"Building tree structure from {len(files)} files...", file=sys.stderr)
         tree = {
             "name": root_path.name,
             "path": str(root_path),
@@ -649,7 +628,7 @@ class FileSystemScanner:
         for i, file_path in enumerate(files):
             # Report progress periodically
             if i % progress_interval == 0:
-                print(f"Building tree: processed {i}/{total_files} files ({i/total_files*100:.1f}%)...", file=sys.stderr)
+                pass
                 
             try:
                 # Use a try-except with timeout for network paths
@@ -831,10 +810,6 @@ class FileSystemScanner:
                 node["size"] = stat_info.st_size
                 node["extension"] = path.suffix.lower()
                 self.file_count += 1
-                if self.file_count % 1000 == 0:
-                    print(
-                        f"Progress: {self.file_count} files scanned...", file=sys.stderr
-                    )
             except (OSError, PermissionError):
                 return None
             return node

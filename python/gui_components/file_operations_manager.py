@@ -8,10 +8,15 @@ for the Clean Incomings GUI application.
 import os
 import threading
 import uuid
+import time
 import concurrent.futures
 from typing import Callable, Dict, Any, List
 from python.file_operations_utils.file_management import copy_item, move_item, copy_sequence_batch, move_sequence_batch
+from PyQt5.QtCore import QMetaObject, Qt, QTimer, pyqtSignal, QObject
+from python.gui_components.copy_move_progress_window_pyqt5 import CopyMoveProgressWindow
 
+class BatchProgressSignalHelper(QObject):
+    batch_progress_update = pyqtSignal(dict)
 
 class FileOperationsManager:
     """Manages file operations like copy and move for the GUI."""
@@ -27,11 +32,15 @@ class FileOperationsManager:
         self.active_transfers = {}  # Dictionary to store FileTransfer instances by transfer_id
         self.current_batch_id = None
         self.current_operation_type = None
-        
+        self._copy_move_progress_window = None
+        self._pause_requested = False
         # Threading configuration for parallel file operations
         self.max_concurrent_transfers = 4  # Maximum concurrent file transfers
         self.thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=self.max_concurrent_transfers)
         self.shutdown_requested = False
+        # --- Batch progress signal helper for thread-safe UI updates ---
+        self._batch_signal_helper = BatchProgressSignalHelper()
+        self._batch_signal_helper.batch_progress_update.connect(self._on_batch_progress_update)
 
     def copy_files(self, items_to_copy: List[Dict[str, Any]]):
         """Copy selected files/sequences using batch operations for maximum efficiency."""
@@ -40,6 +49,63 @@ class FileOperationsManager:
     def move_files(self, items_to_move: List[Dict[str, Any]]):
         """Move selected files/sequences using batch operations for maximum efficiency."""
         self._start_optimized_batch_operation("Move", items_to_move)
+
+    def _on_batch_progress_update(self, update_data):
+        """
+        Slot to update batch progress UI on the main thread via signal.
+        """
+        try:
+            progress_window = self._copy_move_progress_window
+            if not progress_window:
+                print("[BATCH_SIGNAL] No progress window to update.")
+                return
+            data = update_data.get('data', {})
+            status = data.get('status', '')
+            files_copied = data.get('files_copied', 0)
+            file_count = data.get('total_files', 1)
+            percent = data.get('percent', 0)
+            speed_mbps = data.get('speed_mbps', 0.0)
+            eta_str = data.get('eta_str', 'Calculating...')
+            current_file = data.get('current_file', '')
+            estimated_transferred = data.get('transferred_bytes')
+            if estimated_transferred is None:
+                # fallback to estimate if needed
+                estimated_transferred = files_copied * 2000000  # Assume 2MB per file
+            total_size = data.get('total_size', 0)
+            file_size = data.get('file_size', None)
+            print(f"[BATCH_SIGNAL] Updating progress: files_done={files_copied}, bytes_done={estimated_transferred}, current_file={current_file}, speed={speed_mbps}, eta={eta_str}")
+            # Aggregate progress: update only the file count, not per-batch details
+            # Use the grand total for correct aggregate progress
+            total_files = self.aggregate_total_files if hasattr(self, 'aggregate_total_files') else file_count
+            percent = int(100 * files_copied / total_files) if total_files else 0
+            # ETA calculation: estimate based on elapsed time and rate
+            elapsed = getattr(self, '_aggregate_start_time', None)
+            if elapsed is None:
+                self._aggregate_start_time = time.time()
+                elapsed = 0
+            else:
+                elapsed = time.time() - self._aggregate_start_time
+            eta_str = ''
+            if files_copied > 0 and elapsed > 2:
+                est_total = elapsed * total_files / files_copied
+                eta_sec = int(est_total - elapsed)
+                if eta_sec > 0:
+                    m, s = divmod(eta_sec, 60)
+                    h, m = divmod(m, 60)
+                    if h:
+                        eta_str = f"ETA: {h}h {m}m {s}s"
+                    elif m:
+                        eta_str = f"ETA: {m}m {s}s"
+                    else:
+                        eta_str = f"ETA: {s}s"
+            progress_window.update_aggregate_progress(files_copied, total_files)
+            progress_window.label_eta.setText(eta_str)
+            # (Optionally, speed can be set here if desired)
+            # Do NOT close the window automatically; user must close via the Close button
+        except Exception as err:
+            import traceback
+            print(f"[BATCH_SIGNAL_ERROR] Exception in _on_batch_progress_update: {err}")
+            traceback.print_exc()
 
     def _start_optimized_batch_operation(self, operation_type: str, items_to_process: List[Dict[str, Any]]):
         """Start an optimized batch operation that groups sequences for maximum 10GbE performance."""
@@ -135,10 +201,42 @@ class FileOperationsManager:
             f"  • Total: {total_files} files in {total_operations} operations", "INFO"
         )
         
-        # Show progress window
-        if hasattr(self.app, 'file_operations_progress'):
-            self.app.file_operations_progress.start_operation_batch(operation_type, total_files)
-        
+        # --- AGGREGATE PROGRESS STATE ---
+        self.aggregate_total_files = total_files
+        self.aggregate_files_copied = 0
+        self.aggregate_batches_completed = 0
+        self.aggregate_batches_total = len(sequence_batches) + (1 if individual_files else 0)
+        self._aggregate_lock = threading.Lock()
+
+        # Show PyQt5 floating progress window (never closes automatically)
+        if self._copy_move_progress_window:
+            QMetaObject.invokeMethod(self._copy_move_progress_window, "close", Qt.QueuedConnection)
+        self._copy_move_progress_window = CopyMoveProgressWindow(operation_type=operation_type.title(), parent=self.app)
+        progress_window = self._copy_move_progress_window
+        print(f"[DEBUG] Progress window CREATED: {progress_window} (id(self)={id(self)})", flush=True)
+        progress_window.set_total(total_files, 0)
+        progress_window.pause_resume_requested.connect(self._on_pause_resume)
+        progress_window.cancel_requested.connect(self._on_cancel)
+        progress_window.show()
+        print(f"[DEBUG] Progress window SHOWN: {progress_window.isVisible()} (id(self)={id(self)})", flush=True)
+
+        def aggregate_progress_callback(batch_files_copied):
+            with self._aggregate_lock:
+                self.aggregate_files_copied += batch_files_copied
+                percent = int(100 * self.aggregate_files_copied / self.aggregate_total_files) if self.aggregate_total_files else 0
+                # Only emit signal for overall progress
+                self._batch_signal_helper.batch_progress_update.emit({
+                    'data': {
+                        'status': 'progress',
+                        'files_copied': self.aggregate_files_copied,
+                        'total_files': self.aggregate_total_files,
+                        'percent': percent,
+                        'current_file': '',
+                        'speed_mbps': 0.0,
+                        'eta_str': '',
+                    }
+                })
+
         # Start optimized multithreaded operations
         def start_optimized_operations():
             try:
@@ -146,128 +244,20 @@ class FileOperationsManager:
                 for batch_data in sequence_batches:
                     if self.shutdown_requested:
                         break
-                    
                     transfer_id = str(uuid.uuid4())
-                    
-                    # Add batch to progress tracking
-                    if hasattr(self.app, 'file_operations_progress'):
-                        self.app.file_operations_progress.add_transfer(
-                            transfer_id, 
-                            f"{batch_data['sequence_name']} ({batch_data['file_count']} files)", 
-                            batch_data.get('operation', operation_type.lower()), 
-                            batch_data['total_size']
-                        )
-                    
                     print(f"[BATCH_DEBUG] Processing sequence batch with {batch_data['file_count']} files...")
                     
                     # Custom progress callback for sequence batches
-                    def create_batch_progress_callback(captured_batch_data, captured_transfer_id):
+                    def create_batch_progress_callback():
+                        last_files_copied = {'val': 0}
                         def batch_progress_callback(status_data):
-                            print(f"[BATCH_CALLBACK_DEBUG] Received status update: {status_data}")
-                            
-                            def update_batch_ui():
-                                try:
-                                    print(f"[BATCH_UI_DEBUG] Processing status update in UI thread")
-                                    
-                                    if hasattr(self.app, 'file_operations_progress'):
-                                        data = status_data.get('data', {})
-                                        status = data.get('status', '')
-                                        
-                                        print(f"[BATCH_UI_DEBUG] Status: {status}, Data keys: {list(data.keys())}")
-                                        print(f"[BATCH_UI_DEBUG] Captured batch total_size: {captured_batch_data.get('total_size', 'NOT_FOUND')}")
-                                        
-                                        if status == 'success':
-                                            # Batch completed successfully
-                                            speed_mbps = data.get('speed_mbps', 0)
-                                            speed_gbps = data.get('speed_gbps', 0)
-                                            file_count = data.get('total_files', data.get('file_count', 0))
-                                            
-                                            print(f"[BATCH_UI_DEBUG] Success - completing transfer {captured_transfer_id}")
-                                            
-                                            # Mark as completed with speed info
-                                            self.app.file_operations_progress.complete_transfer(
-                                                captured_transfer_id, True, 
-                                                f"✅ {file_count} files at {speed_mbps:.1f} MB/s ({speed_gbps:.1f} Gbps)"
-                                            )
-                                            
-                                            self.app.status_manager.add_log_message(
-                                                f"✅ BATCH SUCCESS: {file_count} files at {speed_mbps:.1f} MB/s ({speed_gbps:.1f} Gbps)", 
-                                                "INFO"
-                                            )
-                                        elif status == 'progress':
-                                            # Extract progress values
-                                            files_copied = data.get('files_copied', 0)
-                                            file_count = data.get('total_files', 1)
-                                            percent = data.get('percent', 0)
-                                            speed_mbps = data.get('speed_mbps', 0.0)
-                                            eta_str = data.get('eta_str', 'Calculating...')
-                                            
-                                            print(f"[BATCH_UI_DEBUG] Progress update: {files_copied}/{file_count} ({percent:.1f}%) at {speed_mbps} MB/s")
-                                            
-                                            # Use total_size from the original batch data if available
-                                            if captured_batch_data['total_size'] > 0:
-                                                estimated_transferred = min(files_copied * (captured_batch_data['total_size'] // file_count), captured_batch_data['total_size']) if file_count > 0 else 0
-                                                print(f"[BATCH_UI_DEBUG] Using total_size: {captured_batch_data['total_size']} for progress calculation")
-                                            else:
-                                                # Fallback: estimate based on files copied
-                                                estimated_transferred = files_copied * 2000000  # Assume 2MB per file
-                                                print(f"[BATCH_UI_DEBUG] Using total_size: 0 for progress calculation")
-                                            
-                                            print(f"[BATCH_UI_DEBUG] Updating progress bar - transferred: {estimated_transferred}, speed: {speed_mbps}, eta: {eta_str}")
-                                            
-                                            # CRITICAL FIX: Update progress with real-time info and actual percentage
-                                            self.app.file_operations_progress.update_transfer_progress(
-                                                captured_transfer_id, 
-                                                estimated_transferred,
-                                                speed_mbps,
-                                                eta_str,
-                                                'active',
-                                                percent  # Pass the actual percentage from callback
-                                            )
-                                            
-                                            # Log periodic progress (less frequent to avoid spam)
-                                            if files_copied > 0 and files_copied % 50 == 0:  # Every 50 files
-                                                self.app.status_manager.add_log_message(
-                                                    f"📊 Batch progress: {files_copied}/{file_count} files ({percent:.1f}%) at {speed_mbps:.1f} MB/s", 
-                                                    "DEBUG"
-                                                )
-                                        elif status == 'warning':
-                                            # Handle warnings (like existing files or no files found)
-                                            message = data.get('message', 'Warning')
-                                            files_skipped = data.get('files_skipped', 0)
-                                            
-                                            print(f"[BATCH_UI_DEBUG] Warning: {message}")
-                                            
-                                            # For existing files, show as completed but with warning icon
-                                            if files_skipped > 0:
-                                                self.app.file_operations_progress.complete_transfer(
-                                                    captured_transfer_id, True, f"⚠️ {files_skipped} files already exist"
-                                                )
-                                                self.app.status_manager.add_log_message(f"⚠️ EXISTING FILES: {message}", "WARNING")
-                                            else:
-                                                self.app.file_operations_progress.complete_transfer(
-                                                    captured_transfer_id, True, f"⚠️ {message}"
-                                                )
-                                                self.app.status_manager.add_log_message(f"⚠️ BATCH WARNING: {message}", "WARNING")
-                                        elif status == 'error':
-                                            # Handle errors
-                                            message = data.get('message', 'Error')
-                                            print(f"[BATCH_UI_DEBUG] Error: {message}")
-                                            self.app.file_operations_progress.complete_transfer(
-                                                captured_transfer_id, False, f"❌ {message}"
-                                            )
-                                            self.app.status_manager.add_log_message(f"❌ BATCH ERROR: {message}", "ERROR")
-                                    else:
-                                        print(f"[BATCH_UI_DEBUG] No file_operations_progress found on app!")
-                                except Exception as ui_error:
-                                    print(f"[BATCH_UI_ERROR] Error updating batch progress UI: {ui_error}")
-                                    import traceback
-                                    traceback.print_exc()
-                            
-                            if hasattr(self.app, 'after'):
-                                self.app.after(0, update_batch_ui)
-                            else:
-                                print(f"[BATCH_CALLBACK_DEBUG] App has no 'after' method!")
+                            data = status_data.get('data', {})
+                            files_copied = data.get('files_copied', 0)
+                            # Only aggregate the delta since the last update
+                            delta = files_copied - last_files_copied['val']
+                            if delta > 0:
+                                aggregate_progress_callback(delta)
+                                last_files_copied['val'] = files_copied
                         return batch_progress_callback
                     
                     # Execute sequence batch operation - use correct function based on operation type
@@ -276,29 +266,27 @@ class FileOperationsManager:
                             source_dir=batch_data['source_dir'],
                             destination_dir=batch_data['dest_dir'],
                             file_pattern=batch_data['pattern'],
-                            status_callback=create_batch_progress_callback(batch_data, transfer_id),
+                            status_callback=create_batch_progress_callback(),
                             transfer_id=transfer_id,
                             file_count=batch_data['file_count'],
                             total_size=batch_data['total_size']
                         )
-                    else:  # Move operation
+                    else:
                         success, message = move_sequence_batch(
                             source_dir=batch_data['source_dir'],
                             destination_dir=batch_data['dest_dir'],
                             file_pattern=batch_data['pattern'],
-                            status_callback=create_batch_progress_callback(batch_data, transfer_id),
+                            status_callback=create_batch_progress_callback(),
                             transfer_id=transfer_id,
                             file_count=batch_data['file_count'],
                             total_size=batch_data['total_size']
                         )
-                    
                     if not success:
                         def mark_batch_error():
-                            if hasattr(self.app, 'file_operations_progress'):
-                                self.app.file_operations_progress.complete_transfer(
-                                    transfer_id, False, f"Batch failed: {message}"
-                                )
-                        self.app.after(0, mark_batch_error)
+                            self.app.status_manager.add_log_message(
+                                f"Batch failed: {message}", "ERROR"
+                            )
+                        QTimer.singleShot(0, mark_batch_error)
                 
                 # Process individual files with traditional threading
                 if individual_files:
@@ -311,12 +299,6 @@ class FileOperationsManager:
                             break
                         
                         transfer_id = str(uuid.uuid4())
-                        
-                        # Add to progress tracking
-                        if hasattr(self.app, 'file_operations_progress'):
-                            self.app.file_operations_progress.add_transfer(
-                                transfer_id, file_data['file_name'], file_data['operation'], file_data['total_size']
-                            )
                         
                         future = self.thread_pool.submit(
                             self._execute_file_operation_worker,
@@ -399,116 +381,73 @@ class FileOperationsManager:
     def _execute_file_operation_worker(self, operation_func: Callable, source_path: str, destination_path: str, transfer_id: str, file_name: str, file_number: int, total_files: int):
         """Worker function to execute a file operation with detailed progress tracking."""
         operation_name = "Copy" if operation_func == copy_item else "Move"
-        
         try:
             self.app.status_manager.add_log_message(
-                f"{operation_name} worker (ID: {transfer_id}) started for: {file_name} -> {destination_path}", 
+                f"{operation_name} worker (ID: {transfer_id}) started for: {file_name} -> {destination_path}",
                 "DEBUG"
             )
-            
-            print(f"DEBUG: File {file_number}/{total_files}: {file_name}")
-            print(f"DEBUG: Source path: {source_path}")
-            print(f"DEBUG: Target file path: {destination_path}")
-            
-            # Custom status callback for progress panel integration
             def progress_callback(status_data):
-                # Schedule UI updates on main thread to prevent freezing
                 def update_ui():
                     try:
-                        if hasattr(self.app, 'file_operations_progress'):
-                            # Extract progress data from the status_data structure
-                            data = status_data.get('data', {})
-                            
-                            # Check if this is a progress update with meaningful speed data
-                            if 'speed_mbps' in data and 'transferred_bytes' in data:
-                                transferred = data.get('transferred_bytes', 0)
-                                total_size = data.get('total_bytes', 0)
-                                speed_mbps = data.get('speed_mbps', 0.0)
-                                eta_str = data.get('eta_str', 'Calculating...')
-                                
-                                # Only update if speed_mbps is present and meaningful
-                                self.app.file_operations_progress.update_transfer_progress(
-                                    transfer_id, transferred, speed_mbps, eta_str, 'active'
-                                )
-                            elif data.get('status') == 'success' and 'destination' in data:
-                                # This is a completion callback - mark as completed without changing speed
-                                # The complete_transfer method will be called separately
-                                pass
+                        data = status_data.get('data', {})
+                        transferred = data.get('transferred_bytes', 0)
+                        files_done = 1  # Only one file in this worker
+                        current_file = file_name
+                        speed_mbps = data.get('speed_mbps', 0.0)
+                        eta_str = data.get('eta_str', 'Calculating...')
+                        if self._copy_move_progress_window:
+                            def safe_update():
+                                print(f"[QT_DEBUG] File progress: files_done={files_done}, bytes_done={transferred}, current_file={current_file}, speed={speed_mbps}, eta={eta_str}")
+                                self._copy_move_progress_window.update_progress(files_done, transferred, current_file)
+                                self._copy_move_progress_window.label_speed.setText(f"Speed: {speed_mbps:.2f} MB/s" if speed_mbps > 0 else "Speed: Calculating...")
+                                self._copy_move_progress_window.label_eta.setText(f"ETA: {eta_str}")
+                            QTimer.singleShot(0, safe_update)
+                        # On completion, close the window
+                        if data.get('status') == 'success' or data.get('status') == 'error':
+                            if self._copy_move_progress_window:
+                                QMetaObject.invokeMethod(self._copy_move_progress_window, "close", Qt.QueuedConnection)
                     except Exception as ui_error:
                         print(f"Error updating progress UI: {ui_error}")
-                
-                # Schedule on main thread
-                if hasattr(self.app, 'after'):
-                    self.app.after(0, update_ui)
-                
-                # Also send to status manager for logging (on background thread is OK)
-                if hasattr(self.app, 'status_manager'):
-                    self.app.status_manager.add_log_message(f"File operation progress: {status_data.get('data', {}).get('message', 'Progress update')}", "DEBUG")
-            
-            # Execute the file operation with progress callback
+                QTimer.singleShot(0, update_ui)
             success, message = operation_func(
                 source_path=source_path,
                 destination_path=destination_path,
                 status_callback=progress_callback,
                 transfer_id=transfer_id
             )
-            
             if success:
-                # Mark as completed successfully
                 def mark_success():
                     try:
-                        if hasattr(self.app, 'file_operations_progress'):
-                            self.app.file_operations_progress.complete_transfer(
-                                transfer_id, True, "Completed successfully"
-                            )
-                        
                         self.app.status_manager.add_log_message(
                             f"file_operation_success: Successfully {operation_name.lower()}ed {file_name} to {destination_path}",
                             "DEBUG"
                         )
                     except Exception as success_error:
                         print(f"Error marking success: {success_error}")
-                
-                self.app.after(0, mark_success)
+                QTimer.singleShot(0, mark_success)
                 return (success, message)
             else:
-                # Mark as failed
                 def mark_failed():
                     try:
-                        if hasattr(self.app, 'file_operations_progress'):
-                            self.app.file_operations_progress.complete_transfer(
-                                transfer_id, False, message
-                            )
-                        
                         self.app.status_manager.add_log_message(
                             f"file_operation_error: Failed to {operation_name.lower()} {file_name}: {message}",
                             "ERROR"
                         )
                     except Exception as failed_error:
                         print(f"Error marking failure: {failed_error}")
-                
-                self.app.after(0, mark_failed)
+                QTimer.singleShot(0, mark_failed)
                 raise Exception(message)
-                
         except Exception as worker_exception:
-            # Handle any exceptions - capture the exception in the outer scope
             error_message = str(worker_exception)
-            
             def handle_error():
                 try:
-                    if hasattr(self.app, 'file_operations_progress'):
-                        self.app.file_operations_progress.complete_transfer(
-                            transfer_id, False, error_message
-                        )
-                    
                     self.app.status_manager.add_log_message(
                         f"file_operation_exception: Error in {operation_name.lower()} operation for {file_name}: {error_message}",
                         "ERROR"
                     )
                 except Exception as handler_error:
                     print(f"Error in error handler: {handler_error}")
-            
-            self.app.after(0, handle_error)
+            QTimer.singleShot(0, handle_error)
             raise
 
     def shutdown(self):
@@ -517,24 +456,22 @@ class FileOperationsManager:
         if self.thread_pool:
             self.thread_pool.shutdown(wait=False)
 
-    def handle_transfer_state_change(self, transfer_id: str, new_status: str):
-        """Handle state changes from the progress panel (pause/resume)."""
-        try:
-            # Store the state change in active transfers
-            if transfer_id in self.active_transfers:
-                self.active_transfers[transfer_id]['status'] = new_status
-                self.app.status_manager.add_log_message(
-                    f"Transfer {transfer_id} state changed to: {new_status}", "DEBUG"
-                )
-                
-                # Note: Actual pause/resume implementation would need to be added
-                # to the underlying file operation functions (copy_item, move_item)
-                # For now, this just tracks the state
-                
-        except Exception as e:
-            self.app.status_manager.add_log_message(
-                f"Error handling transfer state change: {str(e)}", "ERROR"
-            )
+    def _on_pause_resume(self):
+        """Handle pause/resume requested from the PyQt5 progress window."""
+        self._pause_requested = not self._pause_requested
+        self.app.status_manager.add_log_message(
+            f"Pause/Resume requested. Now paused: {self._pause_requested}", "INFO"
+        )
+        # Implement soft pause logic between files if possible
+
+    def _on_cancel(self):
+        """Handle cancel requested from the PyQt5 progress window."""
+        self.shutdown_requested = True
+        self.app.status_manager.add_log_message(
+            f"Cancel requested by user. Shutting down batch operation.", "WARNING"
+        )
+        if self._copy_move_progress_window:
+            QMetaObject.invokeMethod(self._copy_move_progress_window, "close", Qt.QueuedConnection)
 
     def handle_transfer_cancellation(self, transfer_id: str):
         """Handle transfer cancellation requests."""

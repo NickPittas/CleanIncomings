@@ -91,12 +91,21 @@ class SettingsWindow(QDialog):
         self.scan_on_startup_check = QCheckBox("Automatically scan source folder on application startup")
         layout.addRow(self.scan_on_startup_check)
         
-        # Example: Max Concurrent Operations
-        self.max_concurrent_ops_spin = QSpinBox()
-        self.max_concurrent_ops_spin.setMinimum(1)
-        self.max_concurrent_ops_spin.setMaximum(16) # Sensible max
-        self.max_concurrent_ops_spin.setValue(4) # Default
-        layout.addRow(QLabel("Max Concurrent File Operations:"), self.max_concurrent_ops_spin)
+        # Scan Threads
+        self.scan_threads_spin = QSpinBox()
+        self.scan_threads_spin.setMinimum(1)
+        self.scan_threads_spin.setMaximum(32)
+        self.scan_threads_spin.setValue(8)
+        self.scan_threads_spin.setToolTip("Number of threads used for scanning directories and finding files/sequences.")
+        layout.addRow(QLabel("Scan Threads:"), self.scan_threads_spin)
+
+        # Copy Threads
+        self.copy_threads_spin = QSpinBox()
+        self.copy_threads_spin.setMinimum(1)
+        self.copy_threads_spin.setMaximum(32)
+        self.copy_threads_spin.setValue(16)
+        self.copy_threads_spin.setToolTip("Number of threads used for copying individual files in parallel.")
+        layout.addRow(QLabel("Copy Threads:"), self.copy_threads_spin)
 
         self.tab_widget.addTab(tab, "General")
 
@@ -149,6 +158,14 @@ class SettingsWindow(QDialog):
         self.patterns_editor.setPlaceholderText("Enter JSON content for shot/task normalization patterns...")
         self.patterns_editor.setFont(QFont("Courier New", 10))
         patterns_layout.addWidget(self.patterns_editor)
+        # Add Edit Patterns button
+        edit_patterns_btn = QPushButton("Edit Patterns (Dialog)")
+        edit_patterns_btn.clicked.connect(self._open_patterns_editor_dialog)
+        patterns_layout.addWidget(edit_patterns_btn)
+        # Add Graphical Edit Patterns button
+        graphical_patterns_btn = QPushButton("Graphical Edit Patterns")
+        graphical_patterns_btn.clicked.connect(self._open_graphical_patterns_editor)
+        patterns_layout.addWidget(graphical_patterns_btn)
         splitter.addWidget(patterns_group)
         
         # Profiles.json editor
@@ -158,12 +175,66 @@ class SettingsWindow(QDialog):
         self.profiles_editor.setPlaceholderText("Enter JSON content for naming profiles...")
         self.profiles_editor.setFont(QFont("Courier New", 10))
         profiles_layout.addWidget(self.profiles_editor)
+        # Add Edit Profiles button
+        edit_profiles_btn = QPushButton("Edit Profiles (Dialog)")
+        edit_profiles_btn.clicked.connect(self._open_profiles_editor_dialog)
+        profiles_layout.addWidget(edit_profiles_btn)
+        # Add Graphical Edit Profiles button
+        graphical_profiles_btn = QPushButton("Graphical Edit Profiles")
+        graphical_profiles_btn.clicked.connect(self._open_graphical_profiles_editor)
+        profiles_layout.addWidget(graphical_profiles_btn)
         splitter.addWidget(profiles_group)
         
         splitter.setSizes([self.width() // 2, self.width() // 2]) # Initial equal split
         layout.addWidget(splitter)
         
         self.tab_widget.addTab(tab, "Normalization Rules")
+
+    def _open_patterns_editor_dialog(self):
+        from python.gui_components.json_pattern_editor_pyqt5 import JsonEditorDialog
+        patterns_path = os.path.join(self.config_dir, "patterns.json")
+        dlg = JsonEditorDialog(self, file_path=patterns_path, title="Edit Patterns (patterns.json)")
+        if dlg.exec_():
+            # Reload content after save
+            try:
+                with open(patterns_path, 'r', encoding='utf-8') as f:
+                    self.patterns_editor.setText(f.read())
+            except Exception as e:
+                QMessageBox.warning(self, "Error Reloading Patterns", f"Could not reload patterns.json: {e}")
+
+    def _open_profiles_editor_dialog(self):
+        from python.gui_components.json_pattern_editor_pyqt5 import JsonEditorDialog
+        profiles_path = os.path.join(self.config_dir, "profiles.json")
+        dlg = JsonEditorDialog(self, file_path=profiles_path, title="Edit Profiles (profiles.json)")
+        if dlg.exec_():
+            # Reload content after save
+            try:
+                with open(profiles_path, 'r', encoding='utf-8') as f:
+                    self.profiles_editor.setText(f.read())
+            except Exception as e:
+                QMessageBox.warning(self, "Error Reloading Profiles", f"Could not reload profiles.json: {e}")
+
+    def _open_graphical_patterns_editor(self):
+        from python.gui_components.graphical_json_editor_pyqt5 import GraphicalJsonEditorDialog
+        patterns_path = os.path.join(self.config_dir, "patterns.json")
+        dlg = GraphicalJsonEditorDialog(self, file_path=patterns_path, title="Graphical Edit Patterns (patterns.json)")
+        if dlg.exec_():
+            try:
+                with open(patterns_path, 'r', encoding='utf-8') as f:
+                    self.patterns_editor.setText(f.read())
+            except Exception as e:
+                QMessageBox.warning(self, "Error Reloading Patterns", f"Could not reload patterns.json: {e}")
+
+    def _open_graphical_profiles_editor(self):
+        from python.gui_components.graphical_json_editor_pyqt5 import GraphicalJsonEditorDialog
+        profiles_path = os.path.join(self.config_dir, "profiles.json")
+        dlg = GraphicalJsonEditorDialog(self, file_path=profiles_path, title="Graphical Edit Profiles (profiles.json)")
+        if dlg.exec_():
+            try:
+                with open(profiles_path, 'r', encoding='utf-8') as f:
+                    self.profiles_editor.setText(f.read())
+            except Exception as e:
+                QMessageBox.warning(self, "Error Reloading Profiles", f"Could not reload profiles.json: {e}")
 
     def _create_profile_management_tab(self):
         """Creates the Profile Management tab."""
@@ -195,6 +266,25 @@ class SettingsWindow(QDialog):
         temp_layout.addWidget(browse_temp_btn)
         layout.addRow(QLabel("Temporary Files Path:"), temp_layout)
 
+        # Batch Copy Threads (Robocopy /MT)
+        self.batch_copy_threads_spin = QSpinBox()
+        self.batch_copy_threads_spin.setMinimum(1)
+        self.batch_copy_threads_spin.setMaximum(128)
+        self.batch_copy_threads_spin.setValue(32)
+        self.batch_copy_threads_spin.setToolTip("Number of threads Robocopy uses for parallel file copy within a batch operation. Too high may overload your system.")
+        layout.addRow(QLabel("Batch Copy Threads (Robocopy /MT):"), self.batch_copy_threads_spin)
+
+        # Progress Update Interval
+        from PyQt5.QtWidgets import QDoubleSpinBox
+        self.progress_update_interval_spin = QDoubleSpinBox()
+        self.progress_update_interval_spin.setMinimum(0.05)
+        self.progress_update_interval_spin.setMaximum(2.0)
+        self.progress_update_interval_spin.setSingleStep(0.05)
+        self.progress_update_interval_spin.setDecimals(2)
+        self.progress_update_interval_spin.setValue(0.5)
+        self.progress_update_interval_spin.setToolTip("How often the progress bar updates during batch copy/move operations.")
+        layout.addRow(QLabel("Progress Update Interval (seconds):"), self.progress_update_interval_spin)
+
         self.tab_widget.addTab(tab, "Advanced")
 
     def _create_action_buttons(self, main_layout):
@@ -223,19 +313,20 @@ class SettingsWindow(QDialog):
     def load_settings(self):
         """Load settings from the settings manager and populate the UI."""
         # General Settings
-        self.default_source_edit.setText(self.settings_manager.get_setting("default_source_folder", ""))
-        self.default_dest_edit.setText(self.settings_manager.get_setting("default_destination_folder", ""))
-        self.scan_on_startup_check.setChecked(self.settings_manager.get_setting("scan_on_startup", False))
-        self.max_concurrent_ops_spin.setValue(self.settings_manager.get_setting("max_concurrent_operations", 4))
+        self.default_source_edit.setText(self.settings_manager.get_setting("ui_state", "default_source_folder", "")) # Corrected section
+        self.default_dest_edit.setText(self.settings_manager.get_setting("ui_state", "default_destination_folder", "")) # Corrected section
+        self.scan_on_startup_check.setChecked(self.settings_manager.get_setting("ui_state", "scan_on_startup", False)) # Corrected section
+        self.scan_threads_spin.setValue(self.settings_manager.get_setting("ui_state", "scan_threads", 8))
+        self.copy_threads_spin.setValue(self.settings_manager.get_setting("ui_state", "copy_threads", 16))
 
         # Appearance Settings
-        current_theme = self.settings_manager.get_setting("theme", "Nuke Dark")
+        current_theme = self.settings_manager.get_setting("ui_state", "theme", "Nuke Dark") # Corrected section
         idx = self.theme_combo.findText(current_theme)
         if idx != -1:
             self.theme_combo.setCurrentIndex(idx)
         
-        self.font_size_spin.setValue(self.settings_manager.get_setting("font_size", 10))
-        self.corner_radius_spin.setValue(self.settings_manager.get_setting("corner_radius", self.parent_app.current_corner_radius if hasattr(self.parent_app, 'current_corner_radius') else 4))
+        self.font_size_spin.setValue(self.settings_manager.get_setting("ui_state", "font_size", 10)) # Corrected section
+        self.corner_radius_spin.setValue(self.settings_manager.get_setting("ui_state", "corner_radius", self.parent_app.current_corner_radius if hasattr(self.parent_app, 'current_corner_radius') else 4)) # Corrected section
 
         # Normalization Rules
         try:
@@ -252,8 +343,10 @@ class SettingsWindow(QDialog):
             QMessageBox.warning(self, "Error Loading Rules", f"Could not load normalization rules: {e}")
 
         # Advanced Settings
-        self.debug_logging_check.setChecked(self.settings_manager.get_setting("debug_logging_enabled", False))
-        self.temp_folder_edit.setText(self.settings_manager.get_setting("temporary_files_path", ""))
+        self.debug_logging_check.setChecked(self.settings_manager.get_setting("ui_state", "debug_logging_enabled", False)) # Corrected section
+        self.temp_folder_edit.setText(self.settings_manager.get_setting("ui_state", "temporary_files_path", "")) # Corrected section
+        self.batch_copy_threads_spin.setValue(self.settings_manager.get_setting("performance", "batch_copy_threads", 32))
+        self.progress_update_interval_spin.setValue(self.settings_manager.get_setting("performance", "progress_update_interval", 0.5))
 
     def apply_settings(self):
         """Apply current settings without closing the dialog."""
@@ -270,15 +363,16 @@ class SettingsWindow(QDialog):
     def _save_current_settings(self):
         """Internal method to save all settings from UI to manager and files."""
         # General Settings
-        self.settings_manager.set_setting("default_source_folder", self.default_source_edit.text())
-        self.settings_manager.set_setting("default_destination_folder", self.default_dest_edit.text())
-        self.settings_manager.set_setting("scan_on_startup", self.scan_on_startup_check.isChecked())
-        self.settings_manager.set_setting("max_concurrent_operations", self.max_concurrent_ops_spin.value())
+        self.settings_manager.update_setting("ui_state", "default_source_folder", self.default_source_edit.text()) # Corrected section
+        self.settings_manager.update_setting("ui_state", "default_destination_folder", self.default_dest_edit.text()) # Corrected section
+        self.settings_manager.update_setting("ui_state", "scan_on_startup", self.scan_on_startup_check.isChecked()) # Corrected section
+        self.settings_manager.update_setting("ui_state", "scan_threads", self.scan_threads_spin.value())
+        self.settings_manager.update_setting("ui_state", "copy_threads", self.copy_threads_spin.value())
 
         # Appearance Settings
-        self.settings_manager.set_setting("theme", self.theme_combo.currentText())
-        self.settings_manager.set_setting("font_size", self.font_size_spin.value())
-        self.settings_manager.set_setting("corner_radius", self.corner_radius_spin.value())
+        self.settings_manager.update_setting("ui_state", "theme", self.theme_combo.currentText()) # Corrected section
+        self.settings_manager.update_setting("ui_state", "font_size", self.font_size_spin.value()) # Corrected section
+        self.settings_manager.update_setting("ui_state", "corner_radius", self.corner_radius_spin.value()) # Corrected section
 
         # Normalization Rules
         try:
@@ -293,11 +387,10 @@ class SettingsWindow(QDialog):
             QMessageBox.critical(self, "Error Saving Rules", f"Could not save normalization rules: {e}")
 
         # Advanced Settings
-        self.settings_manager.set_setting("debug_logging_enabled", self.debug_logging_check.isChecked())
-        self.settings_manager.set_setting("temporary_files_path", self.temp_folder_edit.text())
-        
-        # Persist all settings through the manager
-        self.settings_manager.save_all_settings()
+        self.settings_manager.update_setting("ui_state", "debug_logging_enabled", self.debug_logging_check.isChecked()) # Corrected section
+        self.settings_manager.update_setting("ui_state", "temporary_files_path", self.temp_folder_edit.text()) # Corrected section
+        self.settings_manager.update_setting("performance", "batch_copy_threads", self.batch_copy_threads_spin.value())
+        self.settings_manager.update_setting("performance", "progress_update_interval", self.progress_update_interval_spin.value())
 
 # Example usage (for testing, typically instantiated by the main app)
 if __name__ == '__main__':
@@ -333,10 +426,10 @@ if __name__ == '__main__':
                 }
                 self.save_all_settings() # Create the file with defaults
 
-        def get_setting(self, key: str, default: Any = None) -> Any:
+        def get_setting(self, section: str, key: str, default: Any = None) -> Any:
             return self.settings.get(key, default)
 
-        def set_setting(self, key: str, value: Any):
+        def update_setting(self, section: str, key: str, value: Any):
             self.settings[key] = value
 
         def save_all_settings(self):

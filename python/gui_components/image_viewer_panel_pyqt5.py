@@ -13,7 +13,7 @@ from pathlib import Path
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
     QFrame, QSizePolicy, QScrollArea, QGroupBox, QApplication,
-    QSplitter, QMessageBox
+    QSplitter, QMessageBox, QSlider
 )
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QThread, QSize, QProcess
 from PyQt5.QtGui import QFont, QIcon, QPixmap, QPainter, QBrush, QColor
@@ -131,7 +131,7 @@ class ImageLoaderThread(QThread):
 
 class CollapsibleImageViewer(QWidget):
     """
-    Collapsible image viewer panel that shows the middle frame of image sequences
+    Collapsible image viewer panel that shows frames from image sequences with scrub control
     """
     
     # Signals
@@ -143,6 +143,9 @@ class CollapsibleImageViewer(QWidget):
         self.current_sequence_data = None
         self.current_image_loader = None
         self.current_pixmap = None
+        self.current_frame_index = 0
+        self.total_frames = 0
+        self.sequence_files = []
         self.is_expanded = False
         self.preferred_width = 450  # Width when expanded
         self.collapsed_width = 30   # Width when collapsed
@@ -225,6 +228,47 @@ class CollapsibleImageViewer(QWidget):
                 color: #666;
                 border: 1px solid #444;
             }
+            QPushButton#nav {
+                background-color: #4a4a4a;
+                border: 1px solid #666;
+                color: white;
+                padding: 4px 8px;
+                border-radius: 3px;
+                font-size: 11px;
+                min-width: 25px;
+            }
+            QPushButton#nav:hover {
+                background-color: #5a5a5a;
+            }
+            QPushButton#nav:pressed {
+                background-color: #333;
+            }
+            QPushButton#nav:disabled {
+                background-color: #333;
+                color: #666;
+                border: 1px solid #444;
+            }
+            QSlider::groove:horizontal {
+                border: 1px solid #555;
+                height: 6px;
+                background: #333;
+                border-radius: 3px;
+            }
+            QSlider::handle:horizontal {
+                background: #ffa500;
+                border: 1px solid #666;
+                width: 12px;
+                margin: -4px 0;
+                border-radius: 6px;
+            }
+            QSlider::handle:horizontal:hover {
+                background: #ffb84d;
+            }
+            QSlider::sub-page:horizontal {
+                background: #555;
+                border: 1px solid #666;
+                border-radius: 3px;
+            }
         """)
     
     def _create_toggle_button(self):
@@ -289,10 +333,13 @@ class CollapsibleImageViewer(QWidget):
                 padding: 20px;
             }
         """)
-        self.image_label.setText("Select an image sequence to view the middle frame")
+        self.image_label.setText("Select an image sequence to view frames")
         
         self.scroll_area.setWidget(self.image_label)
         content_layout.addWidget(self.scroll_area)
+        
+        # Frame scrub controls
+        self._create_scrub_controls(content_layout)
         
         # Frame info
         self.frame_info_label = QLabel("")
@@ -301,18 +348,80 @@ class CollapsibleImageViewer(QWidget):
         self.frame_info_label.setWordWrap(True)
         content_layout.addWidget(self.frame_info_label)
         
-        # Controls
-        self._create_controls(content_layout)
+        # Image controls
+        self._create_image_controls(content_layout)
         
         content_layout.addStretch()
         self.main_layout.addWidget(self.content_frame)
     
-    def _create_controls(self, parent_layout):
-        """Create control buttons"""
+    def _create_scrub_controls(self, parent_layout):
+        """Create the frame scrubbing controls"""
+        scrub_frame = QFrame()
+        scrub_frame.setStyleSheet("QFrame { border: 1px solid #555; border-radius: 3px; padding: 5px; }")
+        scrub_layout = QVBoxLayout(scrub_frame)
+        scrub_layout.setSpacing(3)
+        
+        # Frame navigation buttons
+        nav_layout = QHBoxLayout()
+        
+        self.first_frame_btn = QPushButton("⏮")
+        self.first_frame_btn.setObjectName("nav")
+        self.first_frame_btn.setToolTip("Go to first frame")
+        self.first_frame_btn.clicked.connect(self._go_to_first_frame)
+        self.first_frame_btn.setEnabled(False)
+        nav_layout.addWidget(self.first_frame_btn)
+        
+        self.prev_frame_btn = QPushButton("◀")
+        self.prev_frame_btn.setObjectName("nav")
+        self.prev_frame_btn.setToolTip("Previous frame")
+        self.prev_frame_btn.clicked.connect(self._go_to_prev_frame)
+        self.prev_frame_btn.setEnabled(False)
+        nav_layout.addWidget(self.prev_frame_btn)
+        
+        nav_layout.addStretch()
+        
+        # Frame counter
+        self.frame_counter_label = QLabel("0 / 0")
+        self.frame_counter_label.setObjectName("status")
+        self.frame_counter_label.setAlignment(Qt.AlignCenter)
+        nav_layout.addWidget(self.frame_counter_label)
+        
+        nav_layout.addStretch()
+        
+        self.next_frame_btn = QPushButton("▶")
+        self.next_frame_btn.setObjectName("nav")
+        self.next_frame_btn.setToolTip("Next frame")
+        self.next_frame_btn.clicked.connect(self._go_to_next_frame)
+        self.next_frame_btn.setEnabled(False)
+        nav_layout.addWidget(self.next_frame_btn)
+        
+        self.last_frame_btn = QPushButton("⏭")
+        self.last_frame_btn.setObjectName("nav")
+        self.last_frame_btn.setToolTip("Go to last frame")
+        self.last_frame_btn.clicked.connect(self._go_to_last_frame)
+        self.last_frame_btn.setEnabled(False)
+        nav_layout.addWidget(self.last_frame_btn)
+        
+        scrub_layout.addLayout(nav_layout)
+        
+        # Timeline slider
+        self.frame_slider = QSlider(Qt.Horizontal)
+        self.frame_slider.setMinimum(0)
+        self.frame_slider.setMaximum(0)
+        self.frame_slider.setValue(0)
+        self.frame_slider.setEnabled(False)
+        self.frame_slider.valueChanged.connect(self._on_frame_slider_changed)
+        self.frame_slider.setToolTip("Scrub through frames")
+        scrub_layout.addWidget(self.frame_slider)
+        
+        parent_layout.addWidget(scrub_frame)
+    
+    def _create_image_controls(self, parent_layout):
+        """Create image control buttons"""
         controls_layout = QHBoxLayout()
         
         # Refresh button
-        self.refresh_button = QPushButton("🔄 Refresh")
+        self.refresh_button = QPushButton("🔄")
         self.refresh_button.setObjectName("control")
         self.refresh_button.setToolTip("Refresh the current image")
         self.refresh_button.clicked.connect(self._refresh_image)
@@ -362,7 +471,7 @@ class CollapsibleImageViewer(QWidget):
         
         # If we have sequence data, show the image
         if self.current_sequence_data:
-            self._show_middle_frame()
+            self._show_current_frame()
     
     def _set_collapsed_state(self):
         """Set the panel to collapsed state"""
@@ -391,44 +500,52 @@ class CollapsibleImageViewer(QWidget):
         if not sequence_data:
             self.status_label.setText("No sequence selected")
             self.frame_info_label.setText("")
-            self.refresh_button.setEnabled(False)
-            self.fit_button.setEnabled(False)
-            self.actual_size_button.setEnabled(False)
+            self._disable_controls()
             self._clear_image()
             self._stop_current_loader()
             return
         
-        # Update status
-        base_name = sequence_data.get('base_name', 'Unknown')
-        frame_count = sequence_data.get('frame_count', 0)
-        self.status_label.setText(f"{base_name}\n{frame_count} frames")
-        
-        self.refresh_button.setEnabled(True)
-        
-        # If panel is expanded, show the image
-        if self.is_expanded:
-            self._show_middle_frame()
-    
-    def _show_middle_frame(self):
-        """Show the middle frame of the current sequence"""
-        if not self.current_sequence_data:
-            return
-        
-        files = self.current_sequence_data.get('files', [])
+        # Extract sequence files and setup
+        files = sequence_data.get('files', [])
         if not files:
             self.status_label.setText("No files in sequence")
+            self._disable_controls()
             self._clear_image()
             return
         
-        # Find middle frame
-        middle_index = len(files) // 2
-        if isinstance(files[middle_index], dict):
-            middle_file_path = files[middle_index].get('path', '')
-        else:
-            middle_file_path = str(files[middle_index])
+        # Store sequence information
+        self.sequence_files = files
+        self.total_frames = len(files)
+        self.current_frame_index = self.total_frames // 2  # Start with middle frame
         
-        if not middle_file_path or not os.path.exists(middle_file_path):
-            self.status_label.setText("Middle frame not found")
+        # Update UI elements
+        base_name = sequence_data.get('base_name', 'Unknown')
+        self.status_label.setText(f"{base_name}\n{self.total_frames} frames")
+        
+        # Setup frame controls
+        self.frame_slider.setMaximum(self.total_frames - 1)
+        self.frame_slider.setValue(self.current_frame_index)
+        self._enable_controls()
+        self._update_frame_counter()
+        
+        # If panel is expanded, show the current frame
+        if self.is_expanded:
+            self._show_current_frame()
+    
+    def _show_current_frame(self):
+        """Show the currently selected frame"""
+        if not self.sequence_files or self.current_frame_index >= len(self.sequence_files):
+            return
+        
+        # Get current frame file path
+        current_file = self.sequence_files[self.current_frame_index]
+        if isinstance(current_file, dict):
+            file_path = current_file.get('path', '')
+        else:
+            file_path = str(current_file)
+        
+        if not file_path or not os.path.exists(file_path):
+            self.frame_info_label.setText("Frame file not found")
             self._clear_image()
             return
         
@@ -436,20 +553,98 @@ class CollapsibleImageViewer(QWidget):
         self._stop_current_loader()
         
         # Update frame info
-        filename = os.path.basename(middle_file_path)
-        self.frame_info_label.setText(f"Frame {middle_index + 1}/{len(files)}: {filename}")
-        
-        # Start image loading
-        self.status_label.setText(f"Loading frame {middle_index + 1}/{len(files)}...")
+        filename = os.path.basename(file_path)
+        self.frame_info_label.setText(f"Loading: {filename}")
         
         # Calculate max size based on current scroll area size
         scroll_size = self.scroll_area.size()
-        max_size = QSize(scroll_size.width() - 20, scroll_size.height() - 20)  # Leave some margin
+        max_size = QSize(scroll_size.width() - 20, scroll_size.height() - 20)
         
-        self.current_image_loader = ImageLoaderThread(middle_file_path, max_size, self)
+        # Start image loading
+        self.current_image_loader = ImageLoaderThread(file_path, max_size, self)
         self.current_image_loader.image_loaded.connect(self._on_image_loaded)
         self.current_image_loader.error_occurred.connect(self._on_error_occurred)
         self.current_image_loader.start()
+    
+    def _on_frame_slider_changed(self, value):
+        """Handle frame slider value changes"""
+        if value != self.current_frame_index and self.sequence_files:
+            self.current_frame_index = value
+            self._update_frame_counter()
+            if self.is_expanded:
+                self._show_current_frame()
+    
+    def _go_to_first_frame(self):
+        """Go to the first frame"""
+        if self.sequence_files:
+            self.current_frame_index = 0
+            self.frame_slider.setValue(self.current_frame_index)
+            self._update_frame_counter()
+            if self.is_expanded:
+                self._show_current_frame()
+    
+    def _go_to_prev_frame(self):
+        """Go to the previous frame"""
+        if self.sequence_files and self.current_frame_index > 0:
+            self.current_frame_index -= 1
+            self.frame_slider.setValue(self.current_frame_index)
+            self._update_frame_counter()
+            if self.is_expanded:
+                self._show_current_frame()
+    
+    def _go_to_next_frame(self):
+        """Go to the next frame"""
+        if self.sequence_files and self.current_frame_index < len(self.sequence_files) - 1:
+            self.current_frame_index += 1
+            self.frame_slider.setValue(self.current_frame_index)
+            self._update_frame_counter()
+            if self.is_expanded:
+                self._show_current_frame()
+    
+    def _go_to_last_frame(self):
+        """Go to the last frame"""
+        if self.sequence_files:
+            self.current_frame_index = len(self.sequence_files) - 1
+            self.frame_slider.setValue(self.current_frame_index)
+            self._update_frame_counter()
+            if self.is_expanded:
+                self._show_current_frame()
+    
+    def _update_frame_counter(self):
+        """Update the frame counter display"""
+        if self.sequence_files:
+            self.frame_counter_label.setText(f"{self.current_frame_index + 1} / {self.total_frames}")
+        else:
+            self.frame_counter_label.setText("0 / 0")
+    
+    def _enable_controls(self):
+        """Enable frame navigation controls"""
+        has_frames = bool(self.sequence_files)
+        self.frame_slider.setEnabled(has_frames)
+        self.first_frame_btn.setEnabled(has_frames)
+        self.prev_frame_btn.setEnabled(has_frames)
+        self.next_frame_btn.setEnabled(has_frames)
+        self.last_frame_btn.setEnabled(has_frames)
+        self.refresh_button.setEnabled(has_frames)
+    
+    def _disable_controls(self):
+        """Disable frame navigation controls"""
+        self.frame_slider.setEnabled(False)
+        self.first_frame_btn.setEnabled(False)
+        self.prev_frame_btn.setEnabled(False)
+        self.next_frame_btn.setEnabled(False)
+        self.last_frame_btn.setEnabled(False)
+        self.refresh_button.setEnabled(False)
+        self.fit_button.setEnabled(False)
+        self.actual_size_button.setEnabled(False)
+        
+        # Reset frame info
+        self.current_frame_index = 0
+        self.total_frames = 0
+        self.sequence_files = []
+        self.frame_slider.setMaximum(0)
+        self.frame_slider.setValue(0)
+        self._update_frame_counter()
     
     def _stop_current_loader(self):
         """Stop the current image loader"""
@@ -462,14 +657,14 @@ class CollapsibleImageViewer(QWidget):
         """Clear the current image"""
         self.current_pixmap = None
         self.image_label.clear()
-        self.image_label.setText("Select an image sequence to view the middle frame")
+        self.image_label.setText("Select an image sequence to view frames")
         self.fit_button.setEnabled(False)
         self.actual_size_button.setEnabled(False)
     
     def _refresh_image(self):
         """Refresh the current image"""
-        if self.current_sequence_data and self.is_expanded:
-            self._show_middle_frame()
+        if self.sequence_files and self.is_expanded:
+            self._show_current_frame()
     
     def _fit_image(self):
         """Fit image to the scroll area"""
@@ -498,29 +693,23 @@ class CollapsibleImageViewer(QWidget):
         self.image_label.setPixmap(pixmap)
         self.image_label.resize(pixmap.size())
         
-        # Update status
-        base_name = self.current_sequence_data.get('base_name', 'Unknown')
-        frame_count = self.current_sequence_data.get('frame_count', 0)
-        self.status_label.setText(f"{base_name}\n{frame_count} frames")
-        
-        # Enable control buttons
+        # Enable image control buttons
         self.fit_button.setEnabled(True)
         self.actual_size_button.setEnabled(True)
         
         # Update frame info with image dimensions
         width = pixmap.width()
         height = pixmap.height()
-        files = self.current_sequence_data.get('files', [])
-        middle_index = len(files) // 2
-        filename = os.path.basename(files[middle_index] if isinstance(files[middle_index], str) 
-                                   else files[middle_index].get('path', ''))
         
-        self.frame_info_label.setText(f"Frame {middle_index + 1}/{len(files)}: {filename}\n{width} × {height} pixels")
+        current_file = self.sequence_files[self.current_frame_index]
+        filename = os.path.basename(current_file if isinstance(current_file, str) 
+                                   else current_file.get('path', ''))
+        
+        self.frame_info_label.setText(f"{filename}\n{width} × {height} pixels")
     
     def _on_error_occurred(self, error_message: str):
         """Called when an error occurs during image loading"""
-        self.status_label.setText(f"Error loading image")
-        self.frame_info_label.setText(error_message)
+        self.frame_info_label.setText(f"Error: {error_message}")
         self._clear_image()
         if hasattr(self.app, 'logger'):
             self.app.logger.error(f"Image viewer error: {error_message}")

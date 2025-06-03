@@ -2,20 +2,24 @@
 
 ## Overview
 
-The CleanIncomings application now includes a **Collapsible Image Viewer Panel** that displays the middle frame of image sequences directly within the application interface. This feature provides instant visual feedback when selecting sequences without launching external applications.
+The CleanIncomings application now includes a **Collapsible Image Viewer Panel** with **frame scrubbing capabilities** that displays any frame from image sequences directly within the application interface. This feature provides instant visual feedback and frame-by-frame navigation when working with sequences.
 
 ## Features
 
 ### 🎯 Core Functionality
 - **Collapsible Panel**: Starts collapsed by default, expandable with a single click
 - **Embedded Image Display**: Shows images directly within the panel using Qt's native image handling
-- **Automatic Middle Frame Detection**: Automatically finds and displays the middle frame of any selected image sequence
+- **Frame Scrubbing**: Navigate through any frame in the sequence using a timeline slider
+- **Frame Navigation**: Step through frames with dedicated navigation buttons
 - **Smart Format Support**: Handles common formats natively, with fallback conversion for professional formats
 - **Sequence Integration**: Seamlessly integrates with the existing sequence detection and management system
 
 ### 🎨 User Interface
 - **Right-Side Panel**: Positioned on the right side of the main application window
 - **Toggle Button**: Click ▶ to expand, ◀ to collapse the panel
+- **Timeline Scrub Bar**: Horizontal slider for scrubbing through all frames in the sequence
+- **Navigation Controls**: First, previous, next, and last frame buttons
+- **Frame Counter**: Shows current frame position (e.g., "127 / 450")
 - **Image Controls**: Fit to window, actual size, and refresh controls
 - **Status Display**: Shows sequence name, frame count, and current frame info
 - **Scroll Support**: Large images can be scrolled within the display area
@@ -29,27 +33,41 @@ The CleanIncomings application now includes a **Collapsible Image Viewer Panel**
 ### ⚡ Performance Features
 - **Threaded Loading**: Images load in background threads to keep UI responsive
 - **Memory Efficient**: Only loads one image at a time, with proper cleanup
-- **Fast Preview**: Optimized for quick middle-frame preview rather than full sequence playback
+- **Real-time Scrubbing**: Instant frame updates when scrubbing through sequences
+- **Optimized Navigation**: Fast frame switching for smooth workflow
 
 ## How to Use
 
 ### 1. **Expand the Panel**
 - Look for the small ▶ button on the right edge of the application
 - Click it to expand the image viewer panel
-- The panel will resize to show the image display area and controls
+- The panel will resize to show the image display area and all controls
 
 ### 2. **Select a Sequence**
 - Click on any image sequence in the main preview tree
 - The viewer will automatically load and display the middle frame
 - Sequence information (name, frame count) appears at the top
+- Frame navigation controls become enabled
 
-### 3. **View and Navigate**
-- The middle frame appears directly in the panel
-- Frame information shows: "Frame X/Y: filename.ext"
-- Image dimensions are displayed below the frame info
+### 3. **Navigate Through Frames**
+
+#### **Timeline Scrub Bar**
+- **Drag the orange slider** to scrub through frames instantly
+- The slider represents the entire sequence from first to last frame
+- Frame updates in real-time as you drag
+
+#### **Navigation Buttons**
+- **⏮ First**: Jump to the first frame of the sequence
+- **◀ Previous**: Go to the previous frame (or use left arrow key intent)
+- **▶ Next**: Go to the next frame (or use right arrow key intent) 
+- **⏭ Last**: Jump to the last frame of the sequence
+
+#### **Frame Counter**
+- Shows current position as "Frame X / Total" (e.g., "127 / 450")
+- Updates in real-time as you navigate
 
 ### 4. **Image Controls**
-- **🔄 Refresh**: Reload the current image
+- **🔄 Refresh**: Reload the current frame
 - **⊞ Fit**: Scale image to fit the panel window
 - **1:1**: Show image at actual pixel size (may require scrolling)
 
@@ -57,99 +75,136 @@ The CleanIncomings application now includes a **Collapsible Image Viewer Panel**
 - Click the ◀ button to collapse the panel back to minimal width
 - This gives more space to the main preview area
 
+## Advanced Usage
+
+### Frame Review Workflow
+1. **Quick Overview**: Start by scrubbing through the sequence to get a general sense
+2. **Detailed Review**: Use navigation buttons to step through frames one by one
+3. **Problem Areas**: Jump to specific frames using the scrub bar for closer inspection
+4. **Quality Check**: Use "Fit" and "1:1" buttons to examine image quality at different scales
+
+### Professional Workflows
+- **Animation Review**: Scrub through to check for continuity and motion
+- **VFX Sequences**: Step through frames to verify effects and compositing
+- **Color Grading**: Navigate to key frames to check color consistency
+- **Technical QC**: Jump between first/last frames to check for issues
+
+### Keyboard Workflow (Future Enhancement)
+While currently mouse-driven, the interface is designed to eventually support:
+- **Left/Right arrows**: Previous/next frame
+- **Home/End**: First/last frame  
+- **Page Up/Down**: Jump by 10 frames
+- **Space**: Toggle between middle frame and current frame
+
 ## Technical Details
 
-### Image Loading Process
-1. **Sequence Selection**: When a sequence is selected, the middle frame index is calculated
-2. **Background Loading**: Image loading happens in a separate thread to avoid UI blocking
-3. **Format Detection**: Qt tries to load the image directly first
-4. **Fallback Conversion**: For unsupported formats (like EXR), FFmpeg conversion is attempted
-5. **Placeholder Generation**: If all else fails, an informative placeholder is shown
-6. **Smart Scaling**: Images are scaled to fit the panel while preserving aspect ratio
+### Frame Navigation System
+1. **Sequence Loading**: When a sequence is selected, all frame paths are indexed
+2. **Smart Caching**: Only the current frame is loaded into memory
+3. **Real-time Updates**: Frame changes trigger immediate image loading
+4. **Threaded Loading**: Background threads prevent UI blocking during frame switches
+5. **Error Handling**: Graceful fallback for missing or corrupted frames
 
-### Supported Workflow
-- **Standard Formats**: Immediate preview for JPG, PNG, BMP, GIF, and basic TIFF files
-- **Professional Formats**: Conversion-based preview for EXR, HDR, DPX, CIN files (requires FFmpeg)
-- **Unsupported Formats**: Informative placeholder with recommendation to use external viewers
+### Timeline Slider Behavior
+- **Range**: Automatically set to sequence length (0 to frame_count-1)
+- **Sensitivity**: Each slider position represents exactly one frame
+- **Visual Feedback**: Orange handle with smooth animation
+- **Precision**: Frame-accurate positioning for exact navigation
 
 ### Memory Management
-- **Single Image**: Only one image is loaded at a time to conserve memory
-- **Automatic Cleanup**: Previous images are properly cleaned up when loading new ones
-- **Thread Management**: Background threads are properly terminated when collapsing the panel
+- **Single Frame**: Only one frame loaded at a time to conserve memory
+- **Automatic Cleanup**: Previous frames are unloaded when switching
+- **Thread Management**: Background loaders are properly terminated
+- **Resource Optimization**: No unnecessary frame pre-loading
 
 ## Integration with External Players
 
-The image viewer complements rather than replaces external media players:
+The image viewer with scrub functionality complements external media players:
 
-- **Quick Preview**: Use the embedded viewer for instant visual feedback
-- **Professional Review**: Right-click sequences to launch Nuke, MRV2, DJV, or other professional viewers
-- **Full Sequence Playback**: Use external players for frame-by-frame navigation and full sequence review
-- **Color-Critical Work**: Professional viewers provide better color management for critical work
+- **Quick Review**: Use the embedded viewer for rapid frame-by-frame inspection
+- **Detailed Analysis**: Right-click sequences to launch professional viewers for advanced tools
+- **Workflow Bridge**: Preview sequences in the viewer, then send to external tools for detailed work
+- **Quality Control**: Use scrubbing for initial QC, external viewers for final approval
 
 ## Settings and Configuration
 
 ### Panel Behavior
-- **Default State**: Panel starts collapsed to maximize main window space
-- **Width Control**: Preferred width is 450px when expanded, 30px when collapsed
-- **Responsive Design**: Panel adapts to different window sizes and resolutions
+- **Default State**: Panel starts collapsed, scrub controls hidden until expanded
+- **Width Control**: Preferred width is 450px when expanded (fits scrub controls comfortably)
+- **Frame Memory**: Starts at middle frame, remembers position during session
 
-### Image Loading
-- **Max Preview Size**: Images are scaled to fit within the panel (typically 400x300 or larger)
-- **Aspect Ratio**: Always preserved during scaling operations
-- **Quality**: Uses Qt's SmoothTransformation for high-quality scaling
+### Scrub Bar Settings
+- **Timeline Range**: Automatically adjusts to sequence length
+- **Handle Style**: Orange handle for visibility against dark interface
+- **Smooth Scrubbing**: Real-time frame updates during drag operations
+- **Precision Mode**: Each pixel of movement represents precise frame positioning
 
 ## Troubleshooting
 
 ### Common Issues
 
-**Q: Image viewer shows "Preview not available"**
-- A: This appears for formats that Qt cannot load natively (like EXR)
-- Solution: Install FFmpeg for automatic conversion, or use external professional viewers
+**Q: Scrub bar is grayed out**
+- A: This happens when no sequence is selected or the sequence has only one frame
+- Solution: Select a valid image sequence with multiple frames
 
-**Q: Images appear blurry or pixelated**
-- A: This may occur with very large images scaled down to fit the panel
-- Solution: Use the "1:1" button to view at actual size, or launch external viewers for full quality
+**Q: Frame changes are slow during scrubbing**
+- A: Large images or complex formats may take time to load
+- Solution: Professional formats (EXR) may need conversion; standard formats load instantly
 
-**Q: Panel seems slow to load images**
-- A: Loading happens in background threads; complex conversions may take time
-- Solution: Standard formats (JPG, PNG) load instantly; professional formats may take a moment
+**Q: Frame counter shows "0 / 0"**
+- A: This indicates no valid sequence data is loaded
+- Solution: Ensure the selected item is a properly detected image sequence
 
-**Q: EXR files don't show previews**
-- A: EXR requires FFmpeg for conversion to displayable format
-- Solution: Install FFmpeg, or right-click to use Nuke Player/MRV2 for native EXR viewing
+**Q: Some frames show "Preview not available"**
+- A: Individual frames in the sequence may be corrupted or in unsupported formats
+- Solution: Check frame integrity, or use external viewers for problematic frames
+
+**Q: Navigation buttons don't respond**
+- A: Controls are disabled when no sequence is loaded or during frame loading
+- Solution: Wait for current frame to load, or refresh the sequence data
 
 ### Performance Tips
-- **Standard Formats**: Use JPG or PNG for fastest preview performance
-- **Professional Workflows**: Use embedded viewer for quick checks, external viewers for detailed work
-- **Large Sequences**: The viewer shows only the middle frame, keeping memory usage low
+- **Standard Formats**: JPG/PNG sequences provide smoothest scrubbing experience
+- **Large Sequences**: Use external viewers for sequences with 1000+ frames for better performance
+- **Professional Review**: Use scrub bar for quick inspection, external tools for detailed work
+- **Memory Usage**: Close viewer panel when not in use to free memory
 
 ## Keyboard Shortcuts
 
-Currently the image viewer operates through mouse interactions:
+Current mouse-driven controls:
+- **Drag Scrub Bar**: Navigate to any frame
+- **Click Navigation Buttons**: Step through frames
 - **Click ▶/◀**: Toggle panel expansion
-- **Click Fit**: Fit image to panel
-- **Click 1:1**: Show actual size
-- **Click Refresh**: Reload current image
+- **Click Fit/1:1**: Control image scaling
 
 ## Future Enhancements
 
-Potential future features:
-- Frame navigation (previous/next frame buttons)
-- Zoom controls with mouse wheel
-- Image information overlay (EXIF data, color space)
-- Multiple format export options
-- Thumbnail strip for sequence overview
+Planned features for the scrub system:
+- **Keyboard Navigation**: Arrow keys for frame stepping
+- **Playback Mode**: Automatic frame cycling with speed control  
+- **Thumbnail Strip**: Visual overview of sequence with mini-frames
+- **Frame Marking**: Bookmark important frames for quick access
+- **Range Selection**: Select frame ranges for batch operations
+- **Zoom Scrubbing**: Detailed scrubbing with frame interpolation
 
 ---
 
 ## Summary
 
-The Collapsible Image Viewer provides instant visual feedback directly within CleanIncomings, making sequence review faster and more intuitive. It handles most common image formats natively and provides fallback support for professional formats, all while maintaining the responsive performance of the main application.
+The enhanced Image Viewer with frame scrubbing provides **professional-grade sequence navigation** directly within CleanIncomings. The timeline scrub bar and navigation controls make it easy to inspect any frame in a sequence, greatly improving workflow efficiency for animation, VFX, and media review tasks.
 
 **Key Benefits:**
-- ✅ Instant middle-frame preview for any selected sequence
-- ✅ No external windows to manage
-- ✅ Supports both standard and professional image formats
-- ✅ Responsive design that doesn't interfere with main workflow
-- ✅ Smart memory management and performance optimization
-- ✅ Perfect complement to existing external player integrations 
+- ✅ **Frame-by-frame navigation** through any sequence
+- ✅ **Real-time scrubbing** with timeline slider
+- ✅ **Professional navigation controls** (first, previous, next, last)
+- ✅ **Frame-accurate positioning** with visual feedback
+- ✅ **Memory-efficient design** that scales to large sequences
+- ✅ **Seamless integration** with existing CleanIncomings workflow
+- ✅ **Professional format support** with intelligent fallbacks
+
+**Perfect For:**
+- 🎬 **Animation Review**: Check motion and timing frame-by-frame
+- 🎨 **VFX Inspection**: Verify effects and compositing quality
+- 📹 **Media QC**: Quick quality control of rendered sequences
+- 🔍 **Technical Analysis**: Detailed frame inspection for troubleshooting
+- 🎯 **Asset Management**: Preview sequences before organizing or copying 

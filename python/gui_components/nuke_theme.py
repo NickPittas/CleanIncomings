@@ -282,23 +282,27 @@ QSplitter {
 
 QSplitter::handle {
     background-color: #555555;
-    border: 1px solid #666666;
+    border: none;
 }
 
 QSplitter::handle:horizontal {
-    width: 3px;
-    margin: 2px 0px;
-    border-radius: 1px;
+    width: 1px;
+    margin: 0px;
+    border-radius: 0px;
 }
 
 QSplitter::handle:vertical {
-    height: 3px;
-    margin: 0px 2px;
-    border-radius: 1px;
+    height: 1px;
+    margin: 0px;
+    border-radius: 0px;
 }
 
 QSplitter::handle:hover {
-    background-color: #ff6600;
+    background-color: #777777;
+}
+
+QSplitter::handle:pressed {
+    background-color: #999999;
 }
 
 /* Scroll Bars */

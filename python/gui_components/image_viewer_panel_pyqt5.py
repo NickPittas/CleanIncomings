@@ -15,8 +15,8 @@ from PyQt5.QtWidgets import (
     QFrame, QSizePolicy, QScrollArea, QGroupBox, QApplication,
     QSplitter, QMessageBox, QSlider
 )
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QThread, QSize, QProcess
-from PyQt5.QtGui import QFont, QIcon, QPixmap, QPainter, QBrush, QColor
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QThread, QSize, QProcess, QPoint
+from PyQt5.QtGui import QFont, QIcon, QPixmap, QPainter, QBrush, QColor, QWheelEvent, QMouseEvent
 
 
 class ImageLoaderThread(QThread):
@@ -129,6 +129,217 @@ class ImageLoaderThread(QThread):
             return pixmap
 
 
+class ZoomableImageLabel(QLabel):
+    """
+    Custom QLabel that supports zoom and pan functionality
+    """
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAlignment(Qt.AlignCenter)
+        self.original_pixmap = None
+        self.scaled_pixmap = None
+        self.zoom_factor = 1.0
+        self.min_zoom = 0.1
+        self.max_zoom = 5.0
+        self.zoom_step = 0.1
+        self.last_mouse_pos = QPoint()
+        self.is_panning = False
+        
+        # Enable mouse tracking for smooth panning
+        self.setMouseTracking(True)
+        # Accept focus to receive mouse events properly
+        self.setFocusPolicy(Qt.StrongFocus)
+        
+    def set_pixmap(self, pixmap: QPixmap):
+        """Set the pixmap and reset zoom/pan"""
+        self.original_pixmap = pixmap
+        self.zoom_factor = 1.0
+        self._update_display()
+        
+    def clear_image(self):
+        """Clear the image and reset zoom/pan"""
+        self.original_pixmap = None
+        self.scaled_pixmap = None
+        self.zoom_factor = 1.0
+        self.clear()
+        
+    def fit_to_window(self, container_size: QSize):
+        """Fit image to the given container size"""
+        if not self.original_pixmap:
+            return
+            
+        # Calculate zoom factor to fit image in container
+        pixmap_size = self.original_pixmap.size()
+        container_size = QSize(container_size.width() - 40, container_size.height() - 40)  # Margin
+        
+        zoom_x = container_size.width() / pixmap_size.width()
+        zoom_y = container_size.height() / pixmap_size.height()
+        
+        self.zoom_factor = min(zoom_x, zoom_y)
+        self.zoom_factor = max(self.min_zoom, min(self.max_zoom, self.zoom_factor))
+        self._update_display()
+        
+    def set_actual_size(self):
+        """Set image to actual size (100% zoom)"""
+        if not self.original_pixmap:
+            return
+            
+        self.zoom_factor = 1.0
+        self._update_display()
+        
+    def zoom_in(self):
+        """Zoom in by the zoom step"""
+        if self.original_pixmap:
+            self.zoom_factor = min(self.max_zoom, self.zoom_factor + self.zoom_step)
+            self._update_display()
+            
+    def zoom_out(self):
+        """Zoom out by the zoom step"""
+        if self.original_pixmap:
+            self.zoom_factor = max(self.min_zoom, self.zoom_factor - self.zoom_step)
+            self._update_display()
+            
+    def get_zoom_percentage(self) -> int:
+        """Get current zoom as percentage"""
+        return int(self.zoom_factor * 100)
+        
+    def _update_display(self):
+        """Update the displayed image with current zoom and pan"""
+        if not self.original_pixmap:
+            return
+            
+        # Scale the image
+        new_size = self.original_pixmap.size() * self.zoom_factor
+        self.scaled_pixmap = self.original_pixmap.scaled(
+            new_size, 
+            Qt.KeepAspectRatio, 
+            Qt.SmoothTransformation
+        )
+        
+        # Set the pixmap and adjust widget size
+        self.setPixmap(self.scaled_pixmap)
+        self.resize(self.scaled_pixmap.size())
+        
+        # Emit signal to parent about zoom change if needed
+        if hasattr(self.parent(), 'parent') and hasattr(self.parent().parent(), '_update_zoom_display'):
+            try:
+                self.parent().parent()._update_zoom_display()
+            except:
+                pass  # Ignore if method doesn't exist
+            
+    def wheelEvent(self, event: QWheelEvent):
+        """Handle mouse wheel for zooming"""
+        if not self.original_pixmap:
+            return
+            
+        # Get the scroll direction
+        delta = event.angleDelta().y()
+        
+        # Calculate zoom change
+        if delta > 0:
+            # Zoom in
+            new_zoom = min(self.max_zoom, self.zoom_factor + self.zoom_step)
+        else:
+            # Zoom out
+            new_zoom = max(self.min_zoom, self.zoom_factor - self.zoom_step)
+            
+        if new_zoom != self.zoom_factor:
+            self.zoom_factor = new_zoom
+            self._update_display()
+            
+        event.accept()
+        
+    def mousePressEvent(self, event: QMouseEvent):
+        """Handle mouse press for panning"""
+        if event.button() == Qt.MiddleButton and self.original_pixmap:
+            self.is_panning = True
+            self.last_mouse_pos = event.globalPos()  # Use global position for more reliable tracking
+            self.setCursor(Qt.ClosedHandCursor)
+            event.accept()
+        else:
+            super().mousePressEvent(event)
+            
+    def mouseMoveEvent(self, event: QMouseEvent):
+        """Handle mouse move for panning"""
+        if self.is_panning and self.original_pixmap:
+            current_global_pos = event.globalPos()
+            
+            # Calculate delta in global coordinates
+            delta = current_global_pos - self.last_mouse_pos
+            self.last_mouse_pos = current_global_pos
+            
+            # Get parent scroll area and adjust scroll position
+            scroll_area = self.get_scroll_area()
+            if scroll_area:
+                h_scrollbar = scroll_area.horizontalScrollBar()
+                v_scrollbar = scroll_area.verticalScrollBar()
+                
+                # Check if scrollbars are actually visible/needed
+                h_visible = h_scrollbar.isVisible() and h_scrollbar.maximum() > 0
+                v_visible = v_scrollbar.isVisible() and v_scrollbar.maximum() > 0
+                
+                if h_visible or v_visible:
+                    old_h = h_scrollbar.value()
+                    old_v = v_scrollbar.value()
+                    
+                    # Invert delta for natural panning feel
+                    new_h = max(0, min(h_scrollbar.maximum(), old_h - delta.x()))
+                    new_v = max(0, min(v_scrollbar.maximum(), old_v - delta.y()))
+                    
+                    h_scrollbar.setValue(new_h)
+                    v_scrollbar.setValue(new_v)
+            
+            event.accept()
+        else:
+            super().mouseMoveEvent(event)
+            
+    def mouseReleaseEvent(self, event: QMouseEvent):
+        """Handle mouse release to stop panning"""
+        if event.button() == Qt.MiddleButton:
+            self.is_panning = False
+            self.setCursor(Qt.ArrowCursor)
+            event.accept()
+        else:
+            super().mouseReleaseEvent(event)
+
+    def get_scroll_area(self):
+        """Get the parent scroll area"""
+        parent = self.parent()
+        # The parent should be the QScrollArea
+        if hasattr(parent, 'horizontalScrollBar') and hasattr(parent, 'verticalScrollBar'):
+            return parent
+        # If not direct parent, try going up the hierarchy
+        while parent:
+            if hasattr(parent, 'horizontalScrollBar') and hasattr(parent, 'verticalScrollBar'):
+                return parent
+            parent = parent.parent()
+        return None
+
+    def keyPressEvent(self, event):
+        """Handle keyboard shortcuts for testing"""
+        if self.original_pixmap:
+            if event.key() == Qt.Key_Plus or event.key() == Qt.Key_Equal:
+                self.zoom_in()
+                event.accept()
+            elif event.key() == Qt.Key_Minus:
+                self.zoom_out()
+                event.accept()
+            elif event.key() == Qt.Key_0:
+                self.set_actual_size()
+                event.accept()
+            elif event.key() == Qt.Key_F:
+                # Get parent scroll area size for fit operation
+                scroll_area = self.get_scroll_area()
+                if scroll_area:
+                    self.fit_to_window(scroll_area.size())
+                event.accept()
+            else:
+                super().keyPressEvent(event)
+        else:
+            super().keyPressEvent(event)
+
+
 class CollapsibleImageViewer(QWidget):
     """
     Collapsible image viewer panel that shows frames from image sequences with scrub control
@@ -165,10 +376,7 @@ class CollapsibleImageViewer(QWidget):
         self.main_layout.setContentsMargins(0, 0, 0, 0)
         self.main_layout.setSpacing(0)
         
-        # Create the toggle button (always visible)
-        self._create_toggle_button()
-        
-        # Create the content area (hidden when collapsed)
+        # Create the content area (no internal toggle button)
         self._create_content_area()
         
         # Apply initial styling
@@ -191,100 +399,69 @@ class CollapsibleImageViewer(QWidget):
                 font-size: 10px;
                 padding: 5px;
             }
-            QPushButton#toggle {
-                background-color: #4a4a4a;
-                border: 1px solid #666;
-                color: white;
-                font-weight: bold;
-                padding: 5px;
-                border-radius: 3px;
-            }
-            QPushButton#toggle:hover {
-                background-color: #5a5a5a;
-            }
-            QPushButton#toggle:pressed {
-                background-color: #333;
-            }
-            QFrame#content {
-                background-color: #2b2b2b;
-                border: none;
-            }
             QPushButton#control {
-                background-color: #4a4a4a;
-                border: 1px solid #666;
-                color: white;
-                padding: 6px;
-                border-radius: 3px;
-                font-size: 11px;
-            }
-            QPushButton#control:hover {
-                background-color: #5a5a5a;
-            }
-            QPushButton#control:pressed {
-                background-color: #333;
-            }
-            QPushButton#control:disabled {
-                background-color: #333;
-                color: #666;
-                border: 1px solid #444;
-            }
-            QPushButton#nav {
                 background-color: #4a4a4a;
                 border: 1px solid #666;
                 color: white;
                 padding: 4px 8px;
                 border-radius: 3px;
-                font-size: 11px;
-                min-width: 25px;
+                font-size: 10px;
+            }
+            QPushButton#control:hover {
+                background-color: #5a5a5a;
+                border-color: #777;
+            }
+            QPushButton#control:pressed {
+                background-color: #3a3a3a;
+            }
+            QPushButton#control:disabled {
+                background-color: #333;
+                color: #666;
+                border-color: #444;
+            }
+            QPushButton#nav {
+                background-color: #4a4a4a;
+                border: 1px solid #666;
+                color: white;
+                padding: 5px;
+                border-radius: 3px;
+                font-size: 12px;
+                min-width: 30px;
             }
             QPushButton#nav:hover {
                 background-color: #5a5a5a;
+                border-color: #777;
             }
             QPushButton#nav:pressed {
-                background-color: #333;
+                background-color: #3a3a3a;
             }
             QPushButton#nav:disabled {
                 background-color: #333;
                 color: #666;
-                border: 1px solid #444;
+                border-color: #444;
             }
             QSlider::groove:horizontal {
                 border: 1px solid #555;
-                height: 6px;
+                height: 8px;
                 background: #333;
-                border-radius: 3px;
+                border-radius: 4px;
             }
             QSlider::handle:horizontal {
-                background: #ffa500;
-                border: 1px solid #666;
-                width: 12px;
+                background: #ff6600;
+                border: 1px solid #cc5200;
+                width: 16px;
                 margin: -4px 0;
-                border-radius: 6px;
+                border-radius: 8px;
             }
             QSlider::handle:horizontal:hover {
-                background: #ffb84d;
+                background: #ff7f33;
+                border-color: #e55a00;
             }
-            QSlider::sub-page:horizontal {
-                background: #555;
-                border: 1px solid #666;
-                border-radius: 3px;
+            QSlider::handle:horizontal:pressed {
+                background: #e55a00;
+                border-color: #b84700;
             }
         """)
-    
-    def _create_toggle_button(self):
-        """Create the toggle button for expanding/collapsing"""
-        self.toggle_button = QPushButton("▶", self)
-        self.toggle_button.setObjectName("toggle")
-        self.toggle_button.setFixedSize(25, 25)
-        self.toggle_button.setToolTip("Show/Hide Image Viewer")
-        self.toggle_button.clicked.connect(self._toggle_panel)
-        
-        # Position the toggle button
-        toggle_layout = QHBoxLayout()
-        toggle_layout.addWidget(self.toggle_button)
-        toggle_layout.addStretch()
-        
-        self.main_layout.addLayout(toggle_layout)
     
     def _create_content_area(self):
         """Create the main content area"""
@@ -314,6 +491,11 @@ class CollapsibleImageViewer(QWidget):
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setAlignment(Qt.AlignCenter)
         self.scroll_area.setMinimumHeight(200)
+        
+        # Enable scroll bars when needed
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        
         self.scroll_area.setStyleSheet("""
             QScrollArea {
                 border: 2px solid #555;
@@ -322,7 +504,7 @@ class CollapsibleImageViewer(QWidget):
             }
         """)
         
-        self.image_label = QLabel()
+        self.image_label = ZoomableImageLabel(self.scroll_area)
         self.image_label.setAlignment(Qt.AlignCenter)
         self.image_label.setMinimumSize(400, 200)
         self.image_label.setStyleSheet("""
@@ -420,6 +602,31 @@ class CollapsibleImageViewer(QWidget):
         """Create image control buttons"""
         controls_layout = QHBoxLayout()
         
+        # Zoom controls
+        self.zoom_out_button = QPushButton("🔍−")
+        self.zoom_out_button.setObjectName("control")
+        self.zoom_out_button.setToolTip("Zoom out (Mouse wheel down)")
+        self.zoom_out_button.clicked.connect(self._zoom_out)
+        self.zoom_out_button.setEnabled(False)
+        controls_layout.addWidget(self.zoom_out_button)
+        
+        # Zoom percentage display
+        self.zoom_label = QLabel("100%")
+        self.zoom_label.setObjectName("status")
+        self.zoom_label.setAlignment(Qt.AlignCenter)
+        self.zoom_label.setMinimumWidth(50)
+        self.zoom_label.setToolTip("Current zoom level")
+        controls_layout.addWidget(self.zoom_label)
+        
+        self.zoom_in_button = QPushButton("🔍+")
+        self.zoom_in_button.setObjectName("control")
+        self.zoom_in_button.setToolTip("Zoom in (Mouse wheel up)")
+        self.zoom_in_button.clicked.connect(self._zoom_in)
+        self.zoom_in_button.setEnabled(False)
+        controls_layout.addWidget(self.zoom_in_button)
+        
+        controls_layout.addSpacing(10)
+        
         # Refresh button
         self.refresh_button = QPushButton("🔄")
         self.refresh_button.setObjectName("control")
@@ -439,30 +646,50 @@ class CollapsibleImageViewer(QWidget):
         # Actual size button
         self.actual_size_button = QPushButton("1:1")
         self.actual_size_button.setObjectName("control")
-        self.actual_size_button.setToolTip("Show actual size")
+        self.actual_size_button.setToolTip("Show actual size (100%)")
         self.actual_size_button.clicked.connect(self._actual_size)
         self.actual_size_button.setEnabled(False)
         controls_layout.addWidget(self.actual_size_button)
         
+        # Help text for mouse controls
+        help_layout = QHBoxLayout()
+        help_label = QLabel("💡 Wheel: zoom • Middle-drag: pan (zoom >100% first) • +/-: zoom • F: fit")
+        help_label.setObjectName("status")
+        help_label.setAlignment(Qt.AlignCenter)
+        help_label.setWordWrap(True)
+        help_layout.addWidget(help_label)
+        
         parent_layout.addLayout(controls_layout)
+        parent_layout.addLayout(help_layout)
     
     def _connect_signals(self):
         """Connect internal signals"""
         pass
     
-    def _toggle_panel(self):
-        """Toggle the panel between expanded and collapsed states"""
+    def toggle_panel(self):
+        """Toggle the panel between expanded and collapsed states - for external control"""
         if self.is_expanded:
             self._set_collapsed_state()
         else:
             self._set_expanded_state()
     
+    def expand_panel(self):
+        """Expand the panel - for external control"""
+        if not self.is_expanded:
+            self._set_expanded_state()
+    
+    def collapse_panel(self):
+        """Collapse the panel - for external control"""
+        if self.is_expanded:
+            self._set_collapsed_state()
+    
+    def is_panel_expanded(self) -> bool:
+        """Return whether the panel is currently expanded"""
+        return self.is_expanded
+    
     def _set_expanded_state(self):
         """Set the panel to expanded state"""
         self.is_expanded = True
-        self.toggle_button.setText("◀")
-        self.toggle_button.setToolTip("Hide Image Viewer")
-        
         self.content_frame.setVisible(True)
         self.setMinimumWidth(self.preferred_width)
         self.setMaximumWidth(self.preferred_width)
@@ -476,9 +703,6 @@ class CollapsibleImageViewer(QWidget):
     def _set_collapsed_state(self):
         """Set the panel to collapsed state"""
         self.is_expanded = False
-        self.toggle_button.setText("▶")
-        self.toggle_button.setToolTip("Show Image Viewer")
-        
         self.content_frame.setVisible(False)
         self.setMinimumWidth(self.collapsed_width)
         self.setMaximumWidth(self.collapsed_width)
@@ -626,6 +850,10 @@ class CollapsibleImageViewer(QWidget):
         self.next_frame_btn.setEnabled(has_frames)
         self.last_frame_btn.setEnabled(has_frames)
         self.refresh_button.setEnabled(has_frames)
+        
+        # Enable zoom controls if we have frames
+        self.zoom_in_button.setEnabled(has_frames)
+        self.zoom_out_button.setEnabled(has_frames)
     
     def _disable_controls(self):
         """Disable frame navigation controls"""
@@ -637,6 +865,11 @@ class CollapsibleImageViewer(QWidget):
         self.refresh_button.setEnabled(False)
         self.fit_button.setEnabled(False)
         self.actual_size_button.setEnabled(False)
+        
+        # Disable zoom controls
+        self.zoom_in_button.setEnabled(False)
+        self.zoom_out_button.setEnabled(False)
+        self.zoom_label.setText("100%")
         
         # Reset frame info
         self.current_frame_index = 0
@@ -656,10 +889,11 @@ class CollapsibleImageViewer(QWidget):
     def _clear_image(self):
         """Clear the current image"""
         self.current_pixmap = None
-        self.image_label.clear()
+        self.image_label.clear_image()
         self.image_label.setText("Select an image sequence to view frames")
         self.fit_button.setEnabled(False)
         self.actual_size_button.setEnabled(False)
+        self.zoom_label.setText("100%")
     
     def _refresh_image(self):
         """Refresh the current image"""
@@ -670,32 +904,48 @@ class CollapsibleImageViewer(QWidget):
         """Fit image to the scroll area"""
         if self.current_pixmap:
             scroll_size = self.scroll_area.size()
-            fitted_size = QSize(scroll_size.width() - 40, scroll_size.height() - 40)  # Leave margin
-            
-            scaled_pixmap = self.current_pixmap.scaled(
-                fitted_size, 
-                Qt.KeepAspectRatio, 
-                Qt.SmoothTransformation
-            )
-            
-            self.image_label.setPixmap(scaled_pixmap)
-            self.image_label.resize(scaled_pixmap.size())
+            self.image_label.fit_to_window(scroll_size)
+            self._update_zoom_display()
     
     def _actual_size(self):
         """Show image at actual size"""
         if self.current_pixmap:
-            self.image_label.setPixmap(self.current_pixmap)
-            self.image_label.resize(self.current_pixmap.size())
+            self.image_label.set_actual_size()
+            self._update_zoom_display()
+    
+    def _zoom_in(self):
+        """Zoom in the image"""
+        if self.current_pixmap:
+            self.image_label.zoom_in()
+            self._update_zoom_display()
+    
+    def _zoom_out(self):
+        """Zoom out the image"""
+        if self.current_pixmap:
+            self.image_label.zoom_out()
+            self._update_zoom_display()
+    
+    def _update_zoom_display(self):
+        """Update the zoom percentage display"""
+        if self.current_pixmap:
+            zoom_percent = self.image_label.get_zoom_percentage()
+            self.zoom_label.setText(f"{zoom_percent}%")
     
     def _on_image_loaded(self, pixmap: QPixmap):
         """Called when image is successfully loaded"""
         self.current_pixmap = pixmap
-        self.image_label.setPixmap(pixmap)
-        self.image_label.resize(pixmap.size())
+        
+        # Set the pixmap in the zoomable image label
+        self.image_label.set_pixmap(pixmap)
         
         # Enable image control buttons
         self.fit_button.setEnabled(True)
         self.actual_size_button.setEnabled(True)
+        self.zoom_in_button.setEnabled(True)
+        self.zoom_out_button.setEnabled(True)
+        
+        # Update zoom display
+        self._update_zoom_display()
         
         # Update frame info with image dimensions
         width = pixmap.width()

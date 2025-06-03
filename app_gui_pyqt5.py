@@ -11,7 +11,7 @@ from PyQt5.QtWidgets import (
     QSplitter, QFrame, QLabel, QPushButton, QLineEdit, QComboBox,
     QTreeWidget, QTreeWidgetItem, QTextEdit, QStatusBar, QHeaderView,
     QCheckBox, QProgressBar, QMessageBox, QFileDialog, QDialog,
-    QSizePolicy, QGroupBox  # Added QGroupBox for preview section
+    QSizePolicy  # Added QSizePolicy for widget sizing
 )
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QObject
 from PyQt5.QtGui import QFont, QIcon, QPixmap
@@ -303,6 +303,13 @@ class CleanIncomingsApp(QMainWindow):
             pass  # No existing connections
         self.batch_edit_btn.clicked.connect(self.on_batch_edit_btn_clicked)
 
+        # Image viewer button connection
+        try:
+            self.image_viewer_btn.clicked.disconnect()
+        except Exception:
+            pass  # No existing connections
+        self.image_viewer_btn.clicked.connect(self._toggle_image_viewer)
+
         # File operation connections
         try:
             self.copy_selected_btn.clicked.disconnect()
@@ -314,8 +321,6 @@ class CleanIncomingsApp(QMainWindow):
         except Exception:
             pass
         self.move_selected_btn.clicked.connect(self.file_operations_manager.on_move_selected_click)
-
-
 
     def _on_scan_clicked(self):
         """Handle scan button click."""
@@ -407,130 +412,105 @@ class CleanIncomingsApp(QMainWindow):
         self.status_label = QLabel("Welcome to Clean Incomings! Select a profile and folders to begin.")
     
     def _create_top_control_frame(self, parent_layout):
-        """Create the top control frame with folder selection and profile controls."""
+        """Create the top control frame with compact, responsive layout."""
+        # Create frame
         control_frame = QFrame()
-        control_frame.setObjectName("control_frame")
-        control_frame.setFixedHeight(120)
+        control_frame.setObjectName("control_panel_frame")  # For styling
         control_layout = QVBoxLayout(control_frame)
+        control_layout.setContentsMargins(5, 2, 5, 2)  # Minimal margins
+        control_layout.setSpacing(2)  # Minimal spacing
+        control_frame.setMinimumHeight(0)
+        control_frame.setMaximumHeight(80)  # Cap the height for compactness
         
-        # First row: Folder selections
-        folder_row = QHBoxLayout()
-        
-        # Source folder selection
-        source_label = QLabel("Source:")
-        source_label.setFixedWidth(60)
-        folder_row.addWidget(source_label)
-        
-        self.source_folder_entry = QLineEdit()
-        self.source_folder_entry.setPlaceholderText("Select source folder...")
-        folder_row.addWidget(self.source_folder_entry)
-        
-        self.source_browse_btn = QPushButton("Browse")
-        self.source_browse_btn.setFixedWidth(70)
-        self.source_browse_btn.clicked.connect(self._select_source_folder)
-        folder_row.addWidget(self.source_browse_btn)
-        
-        # Destination folder selection
-        dest_label = QLabel("Destination:")
-        dest_label.setFixedWidth(70)
-        folder_row.addWidget(dest_label)
-        
-        self.dest_folder_entry = QLineEdit()
-        self.dest_folder_entry.setPlaceholderText("Select destination folder...")
-        folder_row.addWidget(self.dest_folder_entry)
-        
-        self.dest_browse_btn = QPushButton("Browse")
-        self.dest_browse_btn.setFixedWidth(70)
-        self.dest_browse_btn.clicked.connect(self._select_destination_folder)
-        folder_row.addWidget(self.dest_browse_btn)
-        
-        control_layout.addLayout(folder_row)
-        
-        # Second row: Profile and scan
-        profile_row = QHBoxLayout()
-        
+        # First row - Profile and main actions
+        first_row = QHBoxLayout()
+
+        # Profile selection
         profile_label = QLabel("Profile:")
-        profile_label.setFixedWidth(60)
-        profile_row.addWidget(profile_label)
-        
+        first_row.addWidget(profile_label)
         self.profile_combobox = QComboBox()
         self.profile_combobox.setMinimumWidth(150)
-        profile_row.addWidget(self.profile_combobox)
+        self.profile_combobox.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        first_row.addWidget(self.profile_combobox)
+
+        first_row.addSpacing(10)
+
+        # Refresh button (Scan)
+        self.refresh_btn = self.widget_factory.create_accent_button(
+            text="Scan",
+            icon_name="scan",
+            tooltip="Scan source folder with selected profile",
+            min_width=90
+        )
+        first_row.addWidget(self.refresh_btn)
+
+        # Settings button
+        self.settings_btn = self.widget_factory.create_accent_button(
+            text="Settings",
+            icon_name="settings",
+            tooltip="Open application settings",
+            min_width=90
+        )
+        first_row.addWidget(self.settings_btn)
+
+        first_row.addStretch(1) # Pushes theme controls to the right
+
         
-        self.scan_btn = QPushButton("Scan")
-        self.scan_btn.setFixedWidth(80)
-        self.scan_btn.clicked.connect(self._on_scan_clicked)
-        profile_row.addWidget(self.scan_btn)
+        control_layout.addLayout(first_row)
         
-        profile_row.addStretch()
+        # Second row - Folder selection
+        second_row = QHBoxLayout()
+        second_row.setSpacing(2)  # Minimal spacing
         
-        self.settings_btn = QPushButton("Settings")
-        self.settings_btn.setFixedWidth(80)
-        self.settings_btn.clicked.connect(self._open_settings_window)
-        profile_row.addWidget(self.settings_btn)
+        # Source folder section
+        source_label = QLabel("Source:")
+        source_label.setMinimumWidth(50)
+        second_row.addWidget(source_label)
+        source_btn = self.widget_factory.create_compact_button("📁", tooltip="Select source folder")
+        source_btn.clicked.connect(self._select_source_folder)
+        second_row.addWidget(source_btn)
         
-        control_layout.addLayout(profile_row)
+        self.source_folder_entry = QLineEdit()
+        self.source_folder_entry.setPlaceholderText("Select or enter source folder path...")
+        self.source_folder_entry.textChanged.connect(self.selected_source_folder.set)
+        second_row.addWidget(self.source_folder_entry)
         
-        # Third row: Preview actions
-        action_row = QHBoxLayout()
+        # Destination folder section
+        dest_label = QLabel("Dest:")
+        dest_label.setMinimumWidth(40)
+        second_row.addWidget(dest_label)
         
-        # Selection controls
-        self.select_all_sequences_btn = QPushButton("Select All Sequences")
-        self.select_all_sequences_btn.clicked.connect(self._select_all_sequences)
-        action_row.addWidget(self.select_all_sequences_btn)
+        dest_btn = self.widget_factory.create_compact_button("📁", tooltip="Select destination folder")
+        dest_btn.clicked.connect(self._select_destination_folder)
+        second_row.addWidget(dest_btn)
         
-        self.select_all_files_btn = QPushButton("Select All Files")
-        self.select_all_files_btn.clicked.connect(self._select_all_files)
-        action_row.addWidget(self.select_all_files_btn)
+        self.dest_folder_entry = QLineEdit()
+        self.dest_folder_entry.setPlaceholderText("Select or enter destination folder path...")
+        self.dest_folder_entry.textChanged.connect(self.selected_destination_folder.set)
+        second_row.addWidget(self.dest_folder_entry)
         
-        self.clear_selection_btn = QPushButton("Clear Selection")
-        self.clear_selection_btn.clicked.connect(self._clear_selection)
-        action_row.addWidget(self.clear_selection_btn)
+        control_layout.addLayout(second_row)
         
-        action_row.addStretch()
-        
-        # Edit and viewer controls
-        self.batch_edit_btn = QPushButton("Batch Edit")
-        self.batch_edit_btn.setEnabled(False)
-        self.batch_edit_btn.clicked.connect(self.on_batch_edit_btn_clicked)
-        action_row.addWidget(self.batch_edit_btn)
-        
-        self.image_viewer_btn = QPushButton("Image Viewer")
-        self.image_viewer_btn.setCheckable(True)
-        self.image_viewer_btn.setChecked(False)
-        self.image_viewer_btn.clicked.connect(self._toggle_image_viewer)
-        action_row.addWidget(self.image_viewer_btn)
-        
-        control_layout.addLayout(action_row)
-        
-        parent_layout.addWidget(control_frame)
+        parent_layout.addWidget(control_frame, stretch=0)  # No stretch for header
 
     def _create_main_layout(self, parent_layout):
         """Create the main layout with resizable panels using QSplitter."""
-        # Main horizontal splitter (now only between source tree and preview panel)
+        # Main horizontal splitter (now includes image viewer on the right)
         self.main_horizontal_splitter = QSplitter(Qt.Horizontal)
-        
-        # Style the splitter for thinner handles
-        self.main_horizontal_splitter.setStyleSheet("""
-            QSplitter::handle {
-                background-color: #555;
-                width: 2px;
-            }
-            QSplitter::handle:hover {
-                background-color: #777;
-            }
-        """)
         
         # Create source tree section
         self._create_source_tree_section()
         
-        # Create preview section (now includes image viewer)
+        # Create preview section  
         self._create_preview_section()
         
-        # Set initial splitter sizes (400px for source tree, rest for preview)
-        self.main_horizontal_splitter.setSizes([400, 1200])
+        # Create the collapsible image viewer panel
+        self._create_image_viewer_panel()
         
-        parent_layout.addWidget(self.main_horizontal_splitter)
+        # Set initial splitter sizes (400px for source tree, most space for preview, collapsed width for image viewer)
+        self.main_horizontal_splitter.setSizes([400, 1100, 30])  # Third panel starts collapsed
+        
+        parent_layout.addWidget(self.main_horizontal_splitter, stretch=1)  # Main area gets all extra space
 
     def _create_source_tree_section(self):
         """Create the source tree section with improved layout and controls."""
@@ -556,165 +536,932 @@ class CleanIncomingsApp(QMainWindow):
         self.main_horizontal_splitter.addWidget(source_tree_group)
 
     def _create_preview_section(self):
-        """Create the preview section with tree, actions, and integrated image viewer."""
-        preview_group = QGroupBox("Preview & Actions")
-        preview_layout = QVBoxLayout(preview_group)
+        """Create the preview section with enhanced layout and controls."""
+        preview_group = self.widget_factory.create_group_box("Preview & Actions")
+        preview_layout = preview_group.layout()  # Get existing layout
+        if preview_layout is None:  # Should not happen
+            preview_layout = QVBoxLayout()
+            preview_group.setLayout(preview_layout)
+
+        # Header with controls
+        header_layout = QHBoxLayout()
         
-        # Create horizontal splitter for preview tree and image viewer
-        self.preview_splitter = QSplitter(Qt.Horizontal)
-        self.preview_splitter.setStyleSheet("""
-            QSplitter::handle {
-                background-color: #555;
-                width: 2px;
-            }
-            QSplitter::handle:hover {
-                background-color: #777;
-            }
-        """)
+        header_label = QLabel("Preview & Actions")
+        header_label.setObjectName("header")
+        header_layout.addWidget(header_label)
         
-        # Left side: Preview tree and controls
-        tree_widget = QWidget()
-        tree_layout = QVBoxLayout(tree_widget)
-        tree_layout.setContentsMargins(0, 0, 0, 0)
-        
-        # Tree controls row
-        tree_controls_layout = QHBoxLayout()
+        header_layout.addSpacing(15)
         
         # Sort controls
-        sort_label = QLabel("Sort by:")
-        tree_controls_layout.addWidget(sort_label)
+        sort_label = QLabel("Sort:")
+        header_layout.addWidget(sort_label)
         
         self.sort_menu = QComboBox()
-        self.sort_menu.addItems(["Filename", "Type", "Size", "Task", "Asset", "Version", "Resolution"])
+        self.sort_menu.addItems(["Filename", "Task", "Asset", "Destination", "Type"])
+        self.sort_menu.setMaximumWidth(100)
         self.sort_menu.currentTextChanged.connect(self._on_sort_change)
-        tree_controls_layout.addWidget(self.sort_menu)
+        header_layout.addWidget(self.sort_menu)
         
-        self.sort_direction_btn = QPushButton("↑")
-        self.sort_direction_btn.setFixedSize(30, 25)
-        self.sort_direction_btn.setToolTip("Toggle sort direction")
+        # Sort direction button
+        self.sort_direction_btn = QPushButton("↑")  # Up arrow
+        self.sort_direction_btn.setMaximumWidth(30)
         self.sort_direction_btn.clicked.connect(self._toggle_sort_direction)
-        tree_controls_layout.addWidget(self.sort_direction_btn)
+        header_layout.addWidget(self.sort_direction_btn)
         
-        tree_controls_layout.addSpacing(20)
+        header_layout.addSpacing(15)
         
         # Filter controls
         filter_label = QLabel("Filter:")
-        tree_controls_layout.addWidget(filter_label)
+        header_layout.addWidget(filter_label)
         
-        self.filter_entry = QLineEdit()
-        self.filter_entry.setPlaceholderText("Filter sequences...")
-        self.filter_entry.textChanged.connect(self._on_filter_change)
-        tree_controls_layout.addWidget(self.filter_entry)
+        self.filter_combo = QComboBox()
+        self.filter_combo.addItems(["All", "Sequences", "Files"])
+        self.filter_combo.setMaximumWidth(100)
+        self.filter_combo.currentTextChanged.connect(self._on_filter_change)
+        header_layout.addWidget(self.filter_combo)
         
-        self.clear_filter_btn = QPushButton("Clear")
-        self.clear_filter_btn.setFixedWidth(60)
-        self.clear_filter_btn.clicked.connect(lambda: self.filter_entry.clear())
-        tree_controls_layout.addWidget(self.clear_filter_btn)
+        header_layout.addSpacing(15)
         
-        tree_controls_layout.addStretch()
+        # Selection buttons
+        self.select_all_seq_btn = QPushButton("Select Sequences")
+        self.select_all_seq_btn.setMaximumWidth(160)
+        self.select_all_seq_btn.clicked.connect(self._select_all_sequences)
+        header_layout.addWidget(self.select_all_seq_btn)
+
+        self.select_all_files_btn = QPushButton("Select Files")
+        self.select_all_files_btn.setMaximumWidth(130)
+        self.select_all_files_btn.clicked.connect(self._select_all_files)
+        header_layout.addWidget(self.select_all_files_btn)
+
+        self.clear_selection_btn = QPushButton("Clear")
+        self.clear_selection_btn.setMaximumWidth(90)
+        self.clear_selection_btn.clicked.connect(self._clear_selection)
+        header_layout.addWidget(self.clear_selection_btn)
+
+        self.batch_edit_btn = QPushButton("Batch Edit")
+        self.batch_edit_btn.setMaximumWidth(110)
+        self.batch_edit_btn.clicked.connect(self.on_batch_edit_btn_clicked)
+        header_layout.addWidget(self.batch_edit_btn)
         
-        tree_layout.addLayout(tree_controls_layout)
+        header_layout.addStretch()
         
-        # Preview tree
-        self.preview_tree = QTreeWidget()
-        self.preview_tree.setHeaderLabels([
-            "Filename", "Type", "Size", "Task", "Asset", "Version", "Resolution"
-        ])
-        self.preview_tree.setSelectionMode(QTreeWidget.SelectionMode.ExtendedSelection)
-        self.preview_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.preview_tree.customContextMenuRequested.connect(self._show_preview_context_menu)
+        preview_layout.addLayout(header_layout)
+        
+        # Selection stats
+        self.selection_stats_label = QLabel("")
+        self.selection_stats_label.setObjectName("small")
+        preview_layout.addWidget(self.selection_stats_label)
+          # Preview tree
+        self.preview_tree = self.widget_factory.create_preview_tree()
         self.preview_tree.itemSelectionChanged.connect(self._on_tree_selection_change)
-        self.preview_tree.itemDoubleClicked.connect(self._on_preview_item_double_clicked)
-        self.preview_tree.headerClicked.connect(self._on_preview_header_clicked)
+        preview_layout.addWidget(self.preview_tree)
+        # --- Enhanced context menu for playback/debug ---
+        from PyQt5.QtWidgets import QMenu, QAction, QMessageBox, QApplication
+        from PyQt5.QtCore import Qt
+        self.preview_tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        import json
+        def show_preview_context_menu(point):
+            selected = self.preview_tree.selectedItems()
+            if not selected:
+                return
+            item = selected[0]
+            item_data = item.data(0, Qt.UserRole) or {}
+            is_sequence = item_data.get('type', '').lower() == 'sequence' and item_data.get('sequence_info')
+            
+            # Check if operations are possible
+            has_destination = bool(self.selected_destination_folder.get())
+            has_multiple_items = len(selected) > 1
+            
+            menu = QMenu(self.preview_tree)
+            
+            # Primary operations at the top
+            action_copy = QAction("Copy Selected", self.preview_tree)
+            action_move = QAction("Move Selected", self.preview_tree)
+            action_batch_edit = QAction("Batch Edit", self.preview_tree)
+            
+            # Add icons to primary operations
+            if hasattr(self, 'widget_factory'):
+                copy_icon = self.widget_factory.get_icon('copy')
+                if not copy_icon.isNull():
+                    action_copy.setIcon(copy_icon)
+                
+                move_icon = self.widget_factory.get_icon('move')
+                if not move_icon.isNull():
+                    action_move.setIcon(move_icon)
+                
+                batch_edit_icon = self.widget_factory.get_icon('edit')
+                if not batch_edit_icon.isNull():
+                    action_batch_edit.setIcon(batch_edit_icon)
+            
+            # Enable/disable based on conditions
+            action_copy.setEnabled(has_destination)
+            action_move.setEnabled(has_destination)
+            action_batch_edit.setEnabled(True)  # Always enabled if items are selected
+            
+            # Add tooltips for disabled actions
+            if not has_destination:
+                action_copy.setToolTip("Select a destination folder first")
+                action_move.setToolTip("Select a destination folder first")
+            
+            menu.addAction(action_copy)
+            menu.addAction(action_move)
+            menu.addAction(action_batch_edit)
+            menu.addSeparator()
+            
+            # Playback options
+            action_djv = QAction("Open in DJV", self.preview_tree)
+            action_mrv2 = QAction("Open in MRV2", self.preview_tree)
+            action_nuke_player = QAction("Open in Nuke Player", self.preview_tree)
+            action_nuke_player.setToolTip("Launch Nuke Player/HieroPlayer as standalone viewer")
+            action_nuke = QAction("Send to Nuke", self.preview_tree)
+            action_nuke.setToolTip("Send Read node to running Nuke session via socket")
+            
+            # Add icons to playback options
+            if hasattr(self, 'widget_factory'):
+                video_icon = self.widget_factory.get_icon('video')
+                image_icon = self.widget_factory.get_icon('image')
+                
+                if not video_icon.isNull():
+                    action_djv.setIcon(video_icon)
+                    action_mrv2.setIcon(video_icon)
+                    
+                if not image_icon.isNull():
+                    action_nuke_player.setIcon(image_icon)
+                    action_nuke.setIcon(image_icon)
+            
+            # Add professional media player options
+            menu.addAction(action_djv)
+            menu.addAction(action_mrv2)
+            menu.addAction(action_nuke_player)
+            menu.addAction(action_nuke)
+            
+            if is_sequence:
+                action_show_seq = QAction("Show Sequence Frame List", self.preview_tree)
+                if hasattr(self, 'widget_factory'):
+                    seq_icon = self.widget_factory.get_icon('sequence')
+                    if not seq_icon.isNull():
+                        action_show_seq.setIcon(seq_icon)
+                menu.addAction(action_show_seq)
+            
+            menu.addSeparator()
+            
+            # Debug/Info options
+            action_show_data = QAction("Show Item Data", self.preview_tree)
+            action_copy_path = QAction("Copy Path to Clipboard", self.preview_tree)
+            action_open_explorer = QAction("Open in Explorer", self.preview_tree)
+            action_print_console = QAction("Print Item to Console", self.preview_tree)
+            
+            # Add icons to debug/info options
+            if hasattr(self, 'widget_factory'):
+                info_icon = self.widget_factory.get_icon('info')
+                if not info_icon.isNull():
+                    action_show_data.setIcon(info_icon)
+                
+                clipboard_icon = self.widget_factory.get_icon('copy')
+                if not clipboard_icon.isNull():
+                    action_copy_path.setIcon(clipboard_icon)
+                
+                folder_icon = self.widget_factory.get_icon('folder_open')
+                if not folder_icon.isNull():
+                    action_open_explorer.setIcon(folder_icon)
+                
+                console_icon = self.widget_factory.get_icon('debug')
+                if not console_icon.isNull():
+                    action_print_console.setIcon(console_icon)
+            
+            menu.addAction(action_show_data)
+            menu.addAction(action_copy_path)
+            menu.addAction(action_open_explorer)
+            menu.addAction(action_print_console)
+            
+            # Connect primary operation handlers
+            def copy_selected():
+                if hasattr(self, 'file_operations_manager'):
+                    self.file_operations_manager.on_copy_selected_click()
+                else:
+                    QMessageBox.warning(self, "Copy", "File operations manager not available.")
+            
+            def move_selected():
+                if hasattr(self, 'file_operations_manager'):
+                    self.file_operations_manager.on_move_selected_click()
+                else:
+                    QMessageBox.warning(self, "Move", "File operations manager not available.")
+            
+            def batch_edit():
+                self.on_batch_edit_btn_clicked()
+            
+            action_copy.triggered.connect(copy_selected)
+            action_move.triggered.connect(move_selected)
+            action_batch_edit.triggered.connect(batch_edit)
+            
+            # Connect playback handlers
+            def play_djv():
+                # Always use the ACTUAL source_path for playback (never destination fields)
+                media_path = item_data.get('source_path') or item_data.get('path')
+                if hasattr(self, 'media_player_utils') and hasattr(self.media_player_utils, 'play_with_djv_handler'):
+                    try:
+                        if is_sequence:
+                            result = self.media_player_utils.play_with_djv_handler(item_data['sequence_info'])
+                        else:
+                            result = self.media_player_utils.play_with_djv_handler(media_path)
+                        
+                        if result:
+                            if hasattr(self, 'status_label'):
+                                self.status_label.setText(f"Launched DJV for: {os.path.basename(media_path)}")
+                        else:
+                            QMessageBox.warning(self, "DJV", "DJV Player not found. Please install DJV.")
+                    except Exception as e:
+                        QMessageBox.warning(self, "DJV", f"Failed to launch DJV: {e}")
+                else:
+                    QMessageBox.warning(self, "DJV", "DJV Player functionality is not available.")
+            
+            def play_mrv2():
+                # Always use the ACTUAL source_path for playback (never destination fields)
+                media_path = item_data.get('source_path') or item_data.get('path')
+                if hasattr(self, 'media_player_utils') and hasattr(self.media_player_utils, 'play_with_mrv2_handler'):
+                    try:
+                        if is_sequence:
+                            result = self.media_player_utils.play_with_mrv2_handler(item_data['sequence_info'])
+                        else:
+                            result = self.media_player_utils.play_with_mrv2_handler(media_path)
+                        
+                        if result:
+                            if hasattr(self, 'status_label'):
+                                self.status_label.setText(f"Launched MRV2 for: {os.path.basename(media_path)}")
+                        else:
+                            QMessageBox.warning(self, "MRV2", "MRV2 Player not found. Please install MRV2.")
+                    except Exception as e:
+                        QMessageBox.warning(self, "MRV2", f"Failed to launch MRV2: {e}")
+                else:
+                    QMessageBox.warning(self, "MRV2", "MRV2 Player functionality is not available.")
+            
+            def play_nuke_player():
+                # Always use the ACTUAL source_path for playback (never destination fields)
+                media_path = item_data.get('source_path') or item_data.get('path')
+                if hasattr(self, 'media_player_utils') and hasattr(self.media_player_utils, 'play_with_nuke_player_handler'):
+                    try:
+                        if is_sequence:
+                            result = self.media_player_utils.play_with_nuke_player_handler(item_data['sequence_info'])
+                        else:
+                            result = self.media_player_utils.play_with_nuke_player_handler(media_path)
+                        
+                        if result:
+                            if hasattr(self, 'status_label'):
+                                self.status_label.setText(f"Launched Nuke Player for: {os.path.basename(media_path)}")
+                        else:
+                            QMessageBox.warning(self, "Nuke Player", "Nuke Player not found. Please install Nuke.")
+                    except Exception as e:
+                        QMessageBox.warning(self, "Nuke Player", f"Failed to launch Nuke Player: {e}")
+                else:
+                    QMessageBox.warning(self, "Nuke Player", "Nuke Player functionality is not available.")
+            
+            def play_nuke_full():
+                # Always use the ACTUAL source_path for playback (never destination fields)
+                media_path = item_data.get('source_path') or item_data.get('path')
+                if hasattr(self, 'media_player_utils') and hasattr(self.media_player_utils, 'play_with_nuke_full_handler'):
+                    try:
+                        if is_sequence:
+                            result = self.media_player_utils.play_with_nuke_full_handler(item_data['sequence_info'])
+                        else:
+                            result = self.media_player_utils.play_with_nuke_full_handler(media_path)
+                        
+                        if result:
+                            if hasattr(self, 'status_label'):
+                                self.status_label.setText(f"Sent to Nuke: {os.path.basename(media_path)}")
+                        else:
+                            QMessageBox.warning(self, "Send to Nuke", "Nuke not found or not running with socket server. Please install Nuke and enable NukeServerSocket.")
+                    except Exception as e:
+                        QMessageBox.warning(self, "Send to Nuke", f"Failed to send to Nuke: {e}")
+                else:
+                    QMessageBox.warning(self, "Send to Nuke", "Send to Nuke functionality is not available.")
+            
+            action_djv.triggered.connect(play_djv)
+            action_mrv2.triggered.connect(play_mrv2)
+            action_nuke_player.triggered.connect(play_nuke_player)
+            action_nuke.triggered.connect(play_nuke_full)
+
+            # Connect debug/info handlers
+            def show_item_data():
+                data_str = json.dumps(item_data, indent=2)
+                QMessageBox.information(self, "Item Data", data_str)
+            
+            def copy_path():
+                path = item_data.get('source_path') or item_data.get('path', '')
+                if path:
+                    from PyQt5.QtWidgets import QApplication
+                    QApplication.clipboard().setText(path)
+                    if hasattr(self, 'status_label'):
+                        self.status_label.setText(f"Copied path to clipboard: {path}")
+                else:
+                    QMessageBox.warning(self, "Copy Path", "No path available to copy.")
+            
+            def open_in_explorer():
+                """Open the folder containing the selected file/sequence in the system file manager."""
+                import subprocess
+                import platform
+                
+                # Get the source path of the item
+                source_path = item_data.get('source_path') or item_data.get('path', '')
+                if not source_path:
+                    QMessageBox.warning(self, "Open in Explorer", "No source path available for this item.")
+                    return
+                
+                # For sequences, get the directory from sequence_info if available
+                if is_sequence and item_data.get('sequence_info'):
+                    seq_info = item_data['sequence_info']
+                    if seq_info.get('directory'):
+                        folder_path = seq_info['directory']
+                    else:
+                        folder_path = os.path.dirname(source_path)
+                else:
+                    # For regular files, get the parent directory
+                    folder_path = os.path.dirname(source_path)
+                
+                if not folder_path or not os.path.exists(folder_path):
+                    QMessageBox.warning(self, "Open in Explorer", f"Folder not found: {folder_path}")
+                    return
+                
+                try:
+                    system = platform.system()
+                    if system == "Windows":
+                        # Use os.startfile for Windows - it's more reliable
+                        os.startfile(folder_path)
+                    elif system == "Darwin":  # macOS
+                        subprocess.run(["open", folder_path], check=True)
+                    else:  # Linux and other Unix-like systems
+                        subprocess.run(["xdg-open", folder_path], check=True)
+                    
+                    if hasattr(self, 'status_label'):
+                        self.status_label.setText(f"Opened folder: {folder_path}")
+                        
+                except Exception as e:
+                    QMessageBox.warning(self, "Open in Explorer", f"Failed to open folder: {e}")
+                    print(f"[ERROR] Failed to open folder {folder_path}: {e}")
+            
+            def print_item():
+                print(f"[CONTEXT MENU] Item data: {json.dumps(item_data, indent=2)}")
+                if hasattr(self, 'status_label'):
+                    self.status_label.setText("Item data printed to console.")
+            
+            def show_sequence_frames():
+                if is_sequence:
+                    seq = item_data['sequence_info']
+                    frames = seq.get('files', [])
+                    frame_names = [f.get('filename', str(f)) if isinstance(f, dict) else str(f) for f in frames]
+                    QMessageBox.information(self, "Sequence Frames", "\n".join(frame_names) if frame_names else "No frames found.")
+            
+            action_show_data.triggered.connect(show_item_data)
+            action_copy_path.triggered.connect(copy_path)
+            action_open_explorer.triggered.connect(open_in_explorer)
+            action_print_console.triggered.connect(print_item)
+            
+            if is_sequence:
+                action_show_seq.triggered.connect(show_sequence_frames)
+            
+            menu.exec_(self.preview_tree.viewport().mapToGlobal(point))
+        self.preview_tree.customContextMenuRequested.connect(show_preview_context_menu)
         
-        # Configure header
-        header = self.preview_tree.header()
-        header.setStretchLastSection(False)
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        for i in range(1, 7):
-            header.setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
-        
-        tree_layout.addWidget(self.preview_tree)
-        
-        # Bottom status area
-        bottom_layout = QHBoxLayout()
+        # Action buttons
+        action_layout = QHBoxLayout()
         
         self.copy_selected_btn = QPushButton("Copy Selected")
+        self.copy_selected_btn.setObjectName("accent")
         self.copy_selected_btn.setEnabled(False)
-        bottom_layout.addWidget(self.copy_selected_btn)
+        self.copy_selected_btn.clicked.connect(self.file_operations_manager.on_copy_selected_click)
+        action_layout.addWidget(self.copy_selected_btn)
         
         self.move_selected_btn = QPushButton("Move Selected")
         self.move_selected_btn.setEnabled(False)
-        bottom_layout.addWidget(self.move_selected_btn)
+        self.move_selected_btn.clicked.connect(self.file_operations_manager.on_move_selected_click)
+        action_layout.addWidget(self.move_selected_btn)
         
-        bottom_layout.addStretch()
+        action_layout.addSpacing(10)  # Add some space between file operations and other buttons
         
-        self.selection_stats_label = QLabel("Selected: 0 items")
-        bottom_layout.addWidget(self.selection_stats_label)
+        self.batch_edit_btn = QPushButton("Batch Edit")
+        self.batch_edit_btn.setMaximumWidth(110)
+        self.batch_edit_btn.clicked.connect(self.on_batch_edit_btn_clicked)
+        action_layout.addWidget(self.batch_edit_btn)
         
-        tree_layout.addLayout(bottom_layout)
+        # Add Image Viewer toggle button
+        self.image_viewer_btn = QPushButton("Image Viewer")
+        self.image_viewer_btn.setMaximumWidth(120)
+        self.image_viewer_btn.setCheckable(True)  # Make it a toggle button
+        self.image_viewer_btn.setChecked(False)   # Start unchecked (collapsed)
+        self.image_viewer_btn.setToolTip("Show/Hide the Image Viewer panel")
+        self.image_viewer_btn.clicked.connect(self._toggle_image_viewer)
+        action_layout.addWidget(self.image_viewer_btn)
         
-        # Add tree widget to splitter
-        self.preview_splitter.addWidget(tree_widget)
+        action_layout.addStretch()
         
-        # Right side: Image viewer (initially hidden)
-        self._create_image_viewer_panel()
+        preview_layout.addLayout(action_layout)
         
-        # Set initial splitter sizes (tree takes most space, viewer is hidden)
-        self.preview_splitter.setSizes([800, 0])
+
         
-        # Add splitter to main preview layout
-        preview_layout.addWidget(self.preview_splitter)
-        
-        # Add to main layout
         self.main_horizontal_splitter.addWidget(preview_group)
-    
+
     def _create_image_viewer_panel(self):
-        """Create the image viewer panel within the preview section."""
-        from python.gui_components.image_viewer_panel_pyqt5 import CollapsibleImageViewer
-        
-        # Create the image viewer panel (but without its own toggle button)
+        """Create the collapsible image viewer panel on the right side."""
+        # Create the image viewer panel
         self.image_viewer_panel = CollapsibleImageViewer(self, self)
         
-        # We'll control visibility through our own button, so force it to expanded state
-        # but start hidden via splitter sizes
-        self.image_viewer_panel.is_expanded = True
-        self.image_viewer_panel.content_frame.setVisible(True)
-        self.image_viewer_panel.toggle_button.setVisible(False)  # Hide the internal toggle
+        # Connect the panel toggle signal to handle splitter resizing
+        self.image_viewer_panel.panel_toggled.connect(self._on_image_viewer_toggled)
         
-        # Add to the preview splitter
-        self.preview_splitter.addWidget(self.image_viewer_panel)
+        # Connect the panel toggle signal to update button state
+        self.image_viewer_panel.panel_toggled.connect(self._on_image_viewer_panel_toggled)
+        
+        # Add to the main splitter
+        self.main_horizontal_splitter.addWidget(self.image_viewer_panel)
     
-    def _toggle_image_viewer(self):
-        """Toggle the image viewer panel visibility."""
-        is_visible = self.image_viewer_btn.isChecked()
-        
-        current_sizes = self.preview_splitter.sizes()
-        total_width = sum(current_sizes)
-        
-        if is_visible:
-            # Show image viewer - allocate space for it
-            tree_width = max(400, total_width - 450)  # Keep at least 400px for tree
-            viewer_width = 450  # Preferred width for image viewer
-            new_sizes = [tree_width, viewer_width]
-            self.image_viewer_btn.setText("Hide Viewer")
+    def _on_image_viewer_toggled(self, is_expanded: bool):
+        """Handle image viewer panel toggle to adjust splitter sizes."""
+        try:
+            current_sizes = self.main_horizontal_splitter.sizes()
+            total_width = sum(current_sizes)
+            
+            if is_expanded:
+                # Panel expanded - allocate space for it
+                source_width = 400  # Keep source tree width fixed
+                viewer_width = 450  # Image viewer preferred width
+                preview_width = max(300, total_width - source_width - viewer_width)  # Rest for preview
+                new_sizes = [source_width, preview_width, viewer_width]
+            else:
+                # Panel collapsed - redistribute space
+                source_width = 400  # Keep source tree width fixed
+                viewer_width = 30   # Collapsed width
+                preview_width = total_width - source_width - viewer_width  # Rest for preview
+                new_sizes = [source_width, preview_width, viewer_width]
+            
+            self.main_horizontal_splitter.setSizes(new_sizes)
+            
+        except Exception as e:
+            if hasattr(self, 'logger'):
+                self.logger.warning(f"Error adjusting splitter sizes: {e}")
+
+    def _on_image_viewer_panel_toggled(self, is_expanded: bool):
+        """Handle image viewer panel toggle to update button state."""
+        try:
+            # Update button state to match panel state
+            self.image_viewer_btn.setChecked(is_expanded)
+            
+            # Update button text/style based on state
+            if is_expanded:
+                self.image_viewer_btn.setText("Hide Viewer")
+                self.image_viewer_btn.setToolTip("Hide the Image Viewer panel")
+            else:
+                self.image_viewer_btn.setText("Image Viewer")
+                self.image_viewer_btn.setToolTip("Show the Image Viewer panel")
+                
+        except Exception as e:
+            if hasattr(self, 'logger'):
+                self.logger.warning(f"Error toggling image viewer panel: {e}")
+            print(f"Error toggling image viewer panel: {e}")
+
+    def _configure_profiles(self):
+        """Configure profiles based on loaded data and saved settings."""
+        if not self.normalizer:
+            self.logger.error("Normalizer not initialized, cannot configure profiles.")
+            return
+
+        self.profile_names = self.normalizer.get_profile_names()
+        self.profile_combobox.clear()
+        if self.profile_names:
+            self.profile_combobox.addItems(self.profile_names)
+            
+            # Attempt to restore the last selected profile from settings
+            # Use the get_setting method of SettingsManager
+            saved_profile = self.settings.get_setting("ui_state", "selected_profile", default="")
+            
+            if saved_profile and saved_profile in self.profile_names:
+                self.profile_combobox.setCurrentText(saved_profile)
+                self.selected_profile_name.set(saved_profile)
+                self.normalizer.set_profile(saved_profile)
+                # # self.logger.debug(  # (Silenced for normal use. Re-enable for troubleshooting.)f"Restored and applied profile: {saved_profile}")
+            elif self.profile_names: # If no saved profile or saved is invalid, use the first available
+                first_profile = self.profile_names[0]
+                self.profile_combobox.setCurrentText(first_profile)
+                self.selected_profile_name.set(first_profile)
+                self.normalizer.set_profile(first_profile)
+                # # self.logger.debug(  # (Silenced for normal use. Re-enable for troubleshooting.)f"No valid saved profile, applied first available profile: {first_profile}")
         else:
-            # Hide image viewer - give all space to tree
-            new_sizes = [total_width, 0]
-            self.image_viewer_btn.setText("Image Viewer")
+            self.logger.warning("No profiles found to configure.")
+            # Optionally, disable profile-dependent UI elements here
+
+    def _load_initial_settings(self):
+        """Load initial settings and apply them."""
+        try:
+            # Load all settings using the SettingsManager's method
+            all_settings = self.settings.load_settings()
+            
+            # Now get the ui_state section from the loaded dictionary
+            ui_state = all_settings.get("ui_state", {})
+            
+            if ui_state: # Check if ui_state dictionary is not empty
+                self.settings.restore_ui_state(ui_state)
+                # # self.logger.debug(  # (Silenced for normal use. Re-enable for troubleshooting.)"UI state restored from settings.")
+
+            # On startup: use default_source_folder if set, else source_folder
+            source_folder = ui_state.get("default_source_folder") or ui_state.get("source_folder")
+            if source_folder:
+                self.selected_source_folder.set(source_folder)
+                if hasattr(self, 'source_folder_entry'):
+                    self.source_folder_entry.setText(source_folder)
+            # On startup: use default_destination_folder if set, else destination_folder
+            destination_folder = ui_state.get("default_destination_folder") or ui_state.get("destination_folder")
+            if destination_folder:
+                self.selected_destination_folder.set(destination_folder)
+                if hasattr(self, 'dest_folder_entry'):
+                    self.dest_folder_entry.setText(destination_folder)
+        except Exception as e:
+            self.logger.error(f"Error loading initial settings: {e}")
+
+    def _handle_profile_change(self, profile_name: str):
+        """Handle profile change from StringVar."""
+        if hasattr(self, 'profile_combobox'):
+            self.profile_combobox.setCurrentText(profile_name)
+
+    def _on_profile_changed(self, profile_name: str):
+        """Handle profile combobox change."""
+        self.selected_profile_name.set(profile_name)
+        print(f"Profile changed to: {profile_name}")
+
+    def _on_theme_mode_change(self, mode: str):
+        """Handle theme mode (appearance) change."""
+        # # self.logger.debug(  # (Silenced for normal use. Re-enable for troubleshooting.)f"Theme mode changed to: {mode}")
+        self.theme_manager.apply_theme(self.theme_manager.get_current_theme_name())
+
+    def _on_color_theme_change(self, theme_name: str):
+        """Handle color theme change."""
+        # # self.logger.debug(  # (Silenced for normal use. Re-enable for troubleshooting.)f"Color theme changed to: {theme_name}")
+        self.theme_manager.apply_theme(theme_name)
+
+    # Placeholder methods for the various UI actions
+    def _select_source_folder(self):
+        """Handle source folder selection."""
+        current_path = self.source_folder_entry.text().strip()
+        folder = QFileDialog.getExistingDirectory(self, "Select Source Folder", directory=current_path if current_path else "")
+        if folder:
+            self.selected_source_folder.set(folder)
+            self.source_folder_entry.setText(folder)
+            self.status_label.setText(f"Source folder: {folder}")
+
+    def _select_destination_folder(self):
+        """Handle destination folder selection."""
+        current_path = self.dest_folder_entry.text().strip()
+        folder = QFileDialog.getExistingDirectory(self, "Select Destination Folder", directory=current_path if current_path else "")
+        if folder:
+            self.selected_destination_folder.set(folder)
+            self.dest_folder_entry.setText(folder)
+            self.status_label.setText(f"Destination folder: {folder}")
+
+    def _open_settings_window(self):
+        """Open the settings window as a modal dialog, preventing multiple instances."""
+        try:
+            # Prevent multiple settings windows
+            if hasattr(self, 'settings_window') and self.settings_window is not None:
+                if self.settings_window.isVisible():
+                    self.settings_window.raise_()
+                    self.settings_window.activateWindow()
+                    return
+                else:
+                    self.settings_window = None  # Reset if closed
+
+            self.settings_window = SettingsWindow(
+                parent=self,
+                config_dir=self._config_dir_path,
+                settings_manager=self.settings_manager
+            )
+            # Connect to settings changes
+            self.settings_window.settings_changed.connect(self._on_settings_changed)
+            # Show modally
+            self.settings_window.exec_()
+            # After closing, clear the reference
+            self.settings_window = None
+        except ImportError as e:
+            QMessageBox.warning(
+                self,
+                "Settings Not Available",
+                f"Settings window is not available:\n{e}"
+            )
+
+    def _on_settings_changed(self):
+        """Handle settings changes from the settings window."""
+        # Reload settings
+        self.settings = self.settings_manager.load_settings()
         
-        self.preview_splitter.setSizes(new_sizes)
+        # Apply any immediate changes
+        self.status_label.setText("Settings updated successfully.")
+        print("Settings have been updated.")
+
+    def _on_sort_change(self, sort_column_text: str):
+        """Handle sort column change."""
+        try:
+            if hasattr(self, 'tree_manager') and hasattr(self.tree_manager, 'sort_preview_tree'):
+                ascending = self.sort_direction_btn.text() == "↑"
+                self.tree_manager.sort_preview_tree(sort_column_text, ascending)
+                print(f"Sorting preview tree by: {sort_column_text}, Ascending: {ascending}")
+            else:
+                print("Warning: TreeManager or sort_preview_tree method not found.")
+                pass
+        except Exception as e:
+            print(f"Error during sort: {e}")
+
+    def _toggle_sort_direction(self):
+        """Toggle sort direction and re-apply sort."""
+        current_text = self.sort_direction_btn.text()
+        new_text = "↓" if current_text == "↑" else "↑"
+        self.sort_direction_btn.setText(new_text)
         
-        # If we have sequence data and viewer is being shown, update it
-        if is_visible and hasattr(self, 'image_viewer_panel'):
-            selected_items = self.preview_tree.selectedItems()
-            if len(selected_items) == 1:
-                item_data = selected_items[0].data(0, Qt.UserRole)
+        # Re-apply sort with new direction
+        current_sort_column = self.sort_menu.currentText()
+        if current_sort_column: # Ensure a column is actually selected
+            self._on_sort_change(current_sort_column)
+
+    def _on_filter_change(self, filter_text: str):
+        """Handle filter change in the preview tree."""
+        try:
+            if hasattr(self, 'tree_manager') and hasattr(self.tree_manager, 'filter_preview_tree'):
+                self.tree_manager.filter_preview_tree(filter_text)
+                print(f"Filtering preview tree by: {filter_text}")
+            else:
+                print("Warning: TreeManager or filter_preview_tree method not found.")
+        except Exception as e:
+            print(f"Error during filter: {e}")
+
+    def _select_all_sequences(self):
+        """Select all sequences in preview tree."""
+        try:
+            if hasattr(self, 'tree_manager') and hasattr(self.tree_manager, 'select_all_sequences_in_preview_tree'):
+                self.tree_manager.select_all_sequences_in_preview_tree()
+                print("Selected all sequences in preview tree.")
+                self._on_tree_selection_change() # Update selection-dependent UI
+            else:
+                print("Warning: TreeManager or select_all_sequences_in_preview_tree method not found.")
+        except Exception as e:
+            print(f"Error during select all sequences: {e}")
+
+    def _select_all_files(self):
+        """Select all files in preview tree."""
+        try:
+            if hasattr(self, 'tree_manager') and hasattr(self.tree_manager, 'select_all_files_in_preview_tree'):
+                self.tree_manager.select_all_files_in_preview_tree()
+                print("Selected all files in preview tree.")
+                self._on_tree_selection_change() # Update selection-dependent UI
+            else:
+                print("Warning: TreeManager or select_all_files_in_preview_tree method not found.")
+        except Exception as e:
+            print(f"Error during select all files: {e}")
+
+    def _clear_selection(self):
+        """Clear selection in preview tree."""
+        self.preview_tree.clearSelection()
+        self._on_tree_selection_change()
+
+    def on_batch_edit_btn_clicked(self):
+        """Handle batch edit button click with proper debouncing."""
+        print("[DEBUG] Batch edit button clicked")
+        # Prevent rapid double-clicks
+        if hasattr(self, '_batch_edit_in_progress') and self._batch_edit_in_progress:
+            print("[DEBUG] Batch edit already in progress, ignoring click")
+            return
+        
+        self._batch_edit_in_progress = True
+        try:
+            self._open_batch_edit_dialog()
+        finally:
+            # Reset the flag after a short delay to prevent rapid clicking
+            QTimer.singleShot(500, lambda: setattr(self, '_batch_edit_in_progress', False))
+
+    def _open_batch_edit_dialog(self):
+        """
+        Open batch edit dialog for selected preview items.
+        Simplified version with proper cleanup.
+        """
+        # Single guard check - if dialog exists and is visible, just raise it
+        if hasattr(self, 'batch_edit_dialog') and self.batch_edit_dialog is not None:
+            if self.batch_edit_dialog.isVisible():
+                print("[DEBUG] Dialog already visible, raising it")
+                self.batch_edit_dialog.raise_()
+                self.batch_edit_dialog.activateWindow()
+                return
+            else:
+                # Dialog exists but not visible - clean it up properly
+                print("[DEBUG] Cleaning up existing hidden dialog")
+                self._cleanup_batch_dialog()
+
+        print("[DEBUG] Creating new batch edit dialog...")
+        
+        # Get selected items
+        selected_preview_items_data = []
+        if hasattr(self, 'preview_tree') and self.preview_tree.selectedItems():
+            for item_widget in self.preview_tree.selectedItems():
+                item_data = item_widget.data(0, Qt.UserRole)
                 if item_data and isinstance(item_data, dict):
-                    # Check if it's a sequence
-                    files = item_data.get('files', [])
-                    if files and len(files) > 1:
-                        self.image_viewer_panel.set_sequence_data(item_data)
+                    selected_preview_items_data.append(item_data)
+
+        if not selected_preview_items_data:
+            QMessageBox.information(self, "No Items Selected", 
+                                "Please select items in the preview tree to batch edit.")
+            return
+
+        if not self.normalizer:
+            QMessageBox.critical(self, "Error", 
+                            "Normalizer is not available. Cannot perform batch edit.")
+            return
+
+        # Create and show dialog
+        try:
+            self.batch_edit_dialog = BatchEditDialogPyQt5(
+                parent=self,
+                items=selected_preview_items_data,
+                normalizer=self.normalizer,
+                profile_name=self.selected_profile_name.get()
+            )
+            
+            # Connect signals
+            self.batch_edit_dialog.applied_batch_changes.connect(self._handle_applied_batch_changes)
+            self.batch_edit_dialog.finished.connect(self._on_batch_edit_dialog_finished)
+            
+            print("[DEBUG] Showing batch edit dialog...")
+            self.batch_edit_dialog.show()  # Use show() instead of exec_()
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Batch Edit Error", 
+                            f"Could not open batch edit dialog:\n{e}")
+            print(f"Error opening batch edit dialog: {e}")
+            self._cleanup_batch_dialog()
+
+    def _on_batch_edit_dialog_finished(self, result):
+        """Handle batch edit dialog finish event."""
+        print(f"[DEBUG] Batch edit dialog finished with result={result}")
+        self._cleanup_batch_dialog()
+
+    def _cleanup_batch_dialog(self):
+        """Properly clean up the batch edit dialog."""
+        if hasattr(self, 'batch_edit_dialog') and self.batch_edit_dialog is not None:
+            print("[DEBUG] Cleaning up batch edit dialog...")
+            try:
+                # Disconnect signals first
+                self.batch_edit_dialog.applied_batch_changes.disconnect()
+                self.batch_edit_dialog.finished.disconnect()
+            except Exception:
+                pass  # Signals might already be disconnected
+            
+            # Schedule for deletion and clear reference
+            dialog = self.batch_edit_dialog
+            self.batch_edit_dialog = None
+            dialog.deleteLater()
+            print("[DEBUG] Batch edit dialog cleaned up")
+
+    def _handle_applied_batch_changes(self, changes: dict):
+        """
+        Apply batch changes to all selected preview items.
+        """
+        print(f"[DEBUG] Applying batch changes: {changes}")
+        if not changes:
+            return
+            
+        selected_tree_items = self.preview_tree.selectedItems()
+        if not selected_tree_items:
+            return
+            
+        updated_item_ids = []
+        for tree_item_widget in selected_tree_items:
+            item_data = tree_item_widget.data(0, Qt.UserRole)
+            if not item_data or not isinstance(item_data, dict):
+                continue
+                
+            item_id = item_data.get('id')
+            if not item_id:
+                continue
+                
+            modified_item_data = item_data.copy()
+            changed = False
+            
+            # Update direct fields and normalized_parts
+            for field, value in changes.items():
+                if modified_item_data.get(field) != value:
+                    modified_item_data[field] = value
+                    changed = True
+                    
+                if 'normalized_parts' in modified_item_data and isinstance(modified_item_data['normalized_parts'], dict):
+                    if modified_item_data['normalized_parts'].get(field) != value:
+                        modified_item_data['normalized_parts'][field] = value
+                        changed = True
+                        
+            # If changes were made, regenerate the destination path
+            if changed:
+                # Only regenerate if no custom destination_path was explicitly provided
+                if 'destination_path' not in changes:
+                    try:
+                        # Get current profile and its rules
+                        profile_name = self.selected_profile_name.get()
+                        if self.normalizer and profile_name:
+                            # Get root output directory
+                            root_output_dir = self.selected_destination_folder.get()
+                            if not root_output_dir:
+                                root_output_dir = os.path.join(os.getcwd(), "output")
+                            
+                            # Use the normalizer's path generation method if available
+                            if hasattr(self.normalizer, 'get_batch_edit_preview_path'):
+                                # Create a dict of just the changes for this method
+                                field_changes = {k: v for k, v in changes.items() if k != 'destination_path'}
+                                new_destination_path = self.normalizer.get_batch_edit_preview_path(
+                                    modified_item_data, field_changes, root_output_dir
+                                )
+                                if new_destination_path and not new_destination_path.startswith("Error"):
+                                    modified_item_data['new_destination_path'] = new_destination_path
+                                    print(f"[BATCH_EDIT] Regenerated destination path for {modified_item_data.get('filename', 'unknown')}: {new_destination_path}")
+                                else:
+                                    print(f"[BATCH_EDIT] Failed to regenerate destination path for {modified_item_data.get('filename', 'unknown')}: {new_destination_path}")
+                            else:
+                                # Fallback to direct path generation
+                                from python.mapping_utils.generate_simple_target_path import generate_simple_target_path
+                                
+                                # Get profile rules
+                                if hasattr(self.normalizer, 'current_profile_rules') and self.normalizer.current_profile_rules:
+                                    profile_rules = self.normalizer.current_profile_rules
+                                elif hasattr(self.normalizer, 'all_profiles_data'):
+                                    profile_data = self.normalizer.all_profiles_data.get(profile_name, [])
+                                    if isinstance(profile_data, list):
+                                        profile_rules = profile_data
+                                    elif isinstance(profile_data, dict) and 'rules' in profile_data:
+                                        profile_rules = profile_data['rules']
+                                    else:
+                                        profile_rules = []
+                                else:
+                                    profile_rules = []
+                                
+                                if profile_rules:
+                                    filename = modified_item_data.get('filename', 'unknown.file')
+                                    normalized_parts = modified_item_data.get('normalized_parts', {})
+                                    
+                                    # Extract values from updated normalized parts
+                                    parsed_shot = normalized_parts.get('shot')
+                                    parsed_task = normalized_parts.get('task')
+                                    parsed_asset = normalized_parts.get('asset')
+                                    parsed_stage = normalized_parts.get('stage')
+                                    parsed_version = normalized_parts.get('version')
+                                    parsed_resolution = normalized_parts.get('resolution')
+                                    
+                                    # Generate new target path
+                                    path_result = generate_simple_target_path(
+                                        root_output_dir=root_output_dir,
+                                        profile_rules=profile_rules,
+                                        filename=filename,
+                                        parsed_shot=parsed_shot,
+                                        parsed_task=parsed_task,
+                                        parsed_asset=parsed_asset,
+                                        parsed_stage=parsed_stage,
+                                        parsed_version=parsed_version,
+                                        parsed_resolution=parsed_resolution
+                                    )
+                                    
+                                    new_target_path = path_result.get("target_path")
+                                    if new_target_path:
+                                        modified_item_data['new_destination_path'] = new_target_path
+                                        print(f"[BATCH_EDIT] Regenerated destination path for {filename}: {new_target_path}")
+                                    else:
+                                        # Handle ambiguous or failed path generation
+                                        if path_result.get("ambiguous_match"):
+                                            print(f"[BATCH_EDIT] Ambiguous path match for {filename}")
+                                        else:
+                                            print(f"[BATCH_EDIT] Failed to generate path for {filename}")
+                                else:
+                                    print(f"[BATCH_EDIT] No profile rules available for path regeneration")
+                        else:
+                            print(f"[BATCH_EDIT] No normalizer or profile available for path regeneration")
+                    except Exception as e:
+                        print(f"[BATCH_EDIT] Error regenerating path for {modified_item_data.get('filename', 'unknown')}: {e}")
+                        import traceback
+                        traceback.print_exc()
+                else:
+                    # Use custom destination_path override
+                    custom_path = changes['destination_path']
+                    filename = modified_item_data.get('filename', '')
+                    if custom_path and filename:
+                        # If custom path ends with filename, use as-is; otherwise append filename
+                        if custom_path.endswith(filename):
+                            modified_item_data['new_destination_path'] = custom_path
+                        else:
+                            modified_item_data['new_destination_path'] = os.path.join(custom_path, filename)
+                        print(f"[BATCH_EDIT] Using custom destination path for {filename}: {modified_item_data['new_destination_path']}")
+                
+                # Update the item via tree manager
+                if hasattr(self.tree_manager, 'update_item_properties_and_refresh_display'):
+                    success = self.tree_manager.update_item_properties_and_refresh_display(item_id, modified_item_data)
+                    if success:
+                        updated_item_ids.append(item_id)
+                        self.preview_tree_item_data_map[item_id] = modified_item_data
+                        
+        if updated_item_ids:
+            self.tree_manager.rebuild_preview_tree_from_current_data(preserve_selection=True)
+            if hasattr(self, 'status_label'):
+                self.status_label.setText(f"Batch edit applied to {len(updated_item_ids)} items.")
+        
+        # Update UI state
+        self._on_tree_selection_change()
+        print(f"[DEBUG] Batch changes applied to {len(updated_item_ids)} items")
 
     def _on_tree_selection_change(self):
         """Handle tree selection changes."""
@@ -730,22 +1477,21 @@ class CleanIncomingsApp(QMainWindow):
         self.selection_stats_label.setText(stats_text)
         
         # Update image viewer panel with selected sequence data
-        if hasattr(self, 'image_viewer_panel') and self.image_viewer_btn.isChecked():
+        if hasattr(self, 'image_viewer_panel'):
             if has_selection and len(selected_items) == 1:
                 # Single item selected - show in image viewer if it's a sequence
-                item_data = selected_items[0].data(0, Qt.UserRole)
-                if item_data and isinstance(item_data, dict):
-                    # Check if it's a sequence with multiple files
-                    files = item_data.get('files', [])
-                    if files and len(files) > 1:
-                        self.image_viewer_panel.set_sequence_data(item_data)
-                    else:
-                        # Single file or no files - clear the viewer
-                        self.image_viewer_panel.set_sequence_data(None)
+                item = selected_items[0]
+                item_data = item.data(0, Qt.UserRole) or {}
+                
+                # Check if this is a sequence
+                if item_data.get('type', '').lower() == 'sequence' and item_data.get('sequence_info'):
+                    sequence_data = item_data.get('sequence_info', {})
+                    self.image_viewer_panel.set_sequence_data(sequence_data)
                 else:
+                    # Not a sequence, clear the viewer
                     self.image_viewer_panel.set_sequence_data(None)
             else:
-                # Multiple items or no selection - clear the viewer
+                # No selection or multiple items selected, clear the viewer
                 self.image_viewer_panel.set_sequence_data(None)
 
     def _on_preview_item_double_clicked(self, item, column):
@@ -800,6 +1546,17 @@ class CleanIncomingsApp(QMainWindow):
         except Exception as e:
             self.status_manager.add_log_message(f"VLC playback error: {e}", "ERROR")
             return False
+
+    def _toggle_image_viewer(self):
+        """Handle image viewer toggle button click."""
+        try:
+            # Toggle the panel - button state will be updated via signal
+            self.image_viewer_panel.toggle_panel()
+                
+        except Exception as e:
+            if hasattr(self, 'logger'):
+                self.logger.warning(f"Error toggling image viewer: {e}")
+            print(f"Error toggling image viewer: {e}")
 
 if __name__ == '__main__':
     # Enable High DPI support for better display scaling

@@ -370,7 +370,23 @@ class TreeManager:
             if item.get('id') == item_id:
                 print(f"[DEBUG] Updating master_item_data_list at idx={idx} for item_id={item_id}")
                 self.master_item_data_list[idx] = updated_item_data.copy()
-                print(f"[DEBUG] Updated item data: {updated_item_data}")
+                # Clean, organized log for updated item data
+                summary_lines = [f"[DEBUG] Updated item data for item_id={item_id}:"]
+                summary_lines.append(f"  id: {updated_item_data.get('id')}")
+                summary_lines.append(f"  filename: {updated_item_data.get('filename')}")
+                summary_lines.append(f"  new_destination_path: {updated_item_data.get('new_destination_path')}")
+                summary_lines.append(f"  new_name: {updated_item_data.get('new_name')}")
+                summary_lines.append(f"  error_message: {updated_item_data.get('error_message')}")
+                summary_lines.append(f"  matched_tags: {updated_item_data.get('matched_tags')}")
+                summary_lines.append(f"  matched_rules: {updated_item_data.get('matched_rules')}")
+                summary_lines.append(f"  normalized_parts: {updated_item_data.get('normalized_parts')}")
+                seq_info = updated_item_data.get('sequence_info')
+                if seq_info and isinstance(seq_info, dict) and seq_info.get('files'):
+                    first_file = seq_info['files'][0] if seq_info['files'] else None
+                    summary_lines.append(f"  sequence_first_file: {first_file}")
+                    summary_lines.append(f"  sequence_base_name: {seq_info.get('base_name')}")
+                    summary_lines.append(f"  sequence_directory: {seq_info.get('directory')}")
+                print('\n'.join(summary_lines))
                 found = True
                 break
         if not found:
@@ -388,7 +404,23 @@ class TreeManager:
                 self.app.logger.error(f"update_item_properties_and_refresh_display: QTreeWidgetItem for ID {item_id} not found.")
             return False
         # Get updated display details
-        print(f"[DEBUG] Passing updated_item_data to normalizer for item_id={item_id}: {updated_item_data}")
+        # Clean, organized log for passing updated_item_data
+        summary_lines = [f"[DEBUG] Passing updated_item_data to normalizer for item_id={item_id}:"]
+        summary_lines.append(f"  id: {updated_item_data.get('id')}")
+        summary_lines.append(f"  filename: {updated_item_data.get('filename')}")
+        summary_lines.append(f"  new_destination_path: {updated_item_data.get('new_destination_path')}")
+        summary_lines.append(f"  new_name: {updated_item_data.get('new_name')}")
+        summary_lines.append(f"  error_message: {updated_item_data.get('error_message')}")
+        summary_lines.append(f"  matched_tags: {updated_item_data.get('matched_tags')}")
+        summary_lines.append(f"  matched_rules: {updated_item_data.get('matched_rules')}")
+        summary_lines.append(f"  normalized_parts: {updated_item_data.get('normalized_parts')}")
+        seq_info = updated_item_data.get('sequence_info')
+        if seq_info and isinstance(seq_info, dict) and seq_info.get('files'):
+            first_file = seq_info['files'][0] if seq_info['files'] else None
+            summary_lines.append(f"  sequence_first_file: {first_file}")
+            summary_lines.append(f"  sequence_base_name: {seq_info.get('base_name')}")
+            summary_lines.append(f"  sequence_directory: {seq_info.get('directory')}")
+        print('\n'.join(summary_lines))
         try:
             display_details = self.app.normalizer.get_item_display_details(updated_item_data)
             columns_dict = display_details.get('columns', {})
@@ -425,7 +457,11 @@ class TreeManager:
         tree_item_widget.setToolTip(COL_FILENAME, display_details.get('tooltip', '') if 'display_details' in locals() else '')
         # Update the stored item data in the widget
         tree_item_widget.setData(0, Qt.UserRole, updated_item_data.copy())
-        print(f"[DEBUG] master_item_data_list after update: {self.master_item_data_list}")
+        # Clean, organized log for master_item_data_list after update
+        summary_lines = [f"[DEBUG] master_item_data_list after update: {len(self.master_item_data_list)} items"]
+        for i, item in enumerate(self.master_item_data_list):
+            summary_lines.append(f"  [{i}] id: {item.get('id')}, filename: {item.get('filename')}, new_destination_path: {item.get('new_destination_path')}")
+        print('\n'.join(summary_lines))
         return True
 
     def apply_current_sort(self):

@@ -308,7 +308,7 @@ class MappingGenerator:
                 generated_seq_path = _get_generated_path_string(filename) 
                 if generated_seq_path.startswith("Error:"):
                     return generated_seq_path # Propagate error
-                return f"{generated_seq_path} (Sequence Directory Preview)" # Clarify it's a dir preview
+                return generated_seq_path  # Return clean path without preview text
             except Exception as e:
                 print(f"[MappingGenerator] Exception during path preview for sequence '{filename}': {e}")
                 # self.logger.error(f"Exception generating path preview for sequence '{filename}': {e}", exc_info=True) # If logger

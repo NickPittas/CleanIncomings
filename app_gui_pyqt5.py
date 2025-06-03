@@ -76,6 +76,9 @@ from python.gui_components.settings_window_pyqt5 import SettingsWindow
 from python.gui_components.batch_edit_dialog_pyqt5 import BatchEditDialogPyQt5
 from python.utils.media_player import MediaPlayerUtils
 
+# Import the new collapsible image viewer
+from python.gui_components.image_viewer_panel_pyqt5 import CollapsibleImageViewer
+
 from python.gui_normalizer_adapter import GuiNormalizerAdapter
 
 import logging
@@ -242,12 +245,14 @@ class CleanIncomingsApp(QMainWindow):
                 return result
             self.scan_manager._check_scan_queue = wrapped_check_scan_queue
 
+    # FIXED _handle_scan_progress_update should end after the progress handling:
     def _handle_scan_progress_update(self, progress_msg):
-        # progress_msg: dict with at least 'stage', 'percent', 'details', 'status'
+        """Handle scan progress updates and update floating window."""
         stage = progress_msg.get('stage', 'Scanning')
         percent = int(progress_msg.get('percent', 0))
         details = progress_msg.get('details', '')
         status = progress_msg.get('status', 'in_progress')
+        
         if status == 'in_progress':
             self.progress_window.show_progress(stage=stage, percent=percent, details=details)
         elif status == 'completed':
@@ -259,11 +264,7 @@ class CleanIncomingsApp(QMainWindow):
             self.refresh_btn.setEnabled(True)
         else:
             self.progress_window.show_progress(stage=stage, percent=percent, details=details)
-
-        self.file_operations_manager = FileOperationsManager(self)
-        self.status_manager = StatusManager(self)
-        self.settings_manager = SettingsManager(self)
-        # # self.logger.debug(  # (Silenced for normal use. Re-enable for troubleshooting.)"Core managers initialized.")
+        # REMOVE THE DUPLICATED MANAGER INITIALIZATION CODE
 
     def _initialize_services(self):
         """Initialize additional services."""
@@ -273,29 +274,18 @@ class CleanIncomingsApp(QMainWindow):
         """Connect signals from widgets to their handlers."""
         # Top control connections
         self.profile_combobox.currentTextChanged.connect(self._on_profile_changed)
-        # Source folder entry textChanged is connected in _create_top_control_frame
-        # Dest folder entry textChanged is connected in _create_top_control_frame
         self.refresh_btn.clicked.connect(self._on_scan_clicked)
         self.settings_btn.clicked.connect(self._open_settings_window)
-
-    def _on_scan_clicked(self):
-        # Start scan and show floating progress window
-        self.progress_window.show_progress(stage="Initializing Scan...", percent=0, details="Preparing to scan...")
-        self.refresh_btn.setEnabled(False)
-        self.scan_manager.refresh_scan_data()
-
-        # Theme is now hardcoded below; no combo boxes or handlers
 
         # Source tree connections
         if hasattr(self, 'source_tree'):
             self.source_tree.itemSelectionChanged.connect(self.tree_manager.on_source_tree_selection_changed)
-            self.show_all_btn.clicked.connect(self.tree_manager.clear_source_folder_filter) # Show all by clearing filter
+            self.show_all_btn.clicked.connect(self.tree_manager.clear_source_folder_filter)
 
         # Preview tree connections
         if hasattr(self, 'preview_tree'):
             self.preview_tree.itemSelectionChanged.connect(self._on_tree_selection_change)
             self.preview_tree.itemDoubleClicked.connect(self._on_preview_item_double_clicked)
-            # Header click for sorting
             self.preview_tree.header().sectionClicked.connect(self._on_preview_header_clicked)
 
         # Preview control connections
@@ -305,13 +295,34 @@ class CleanIncomingsApp(QMainWindow):
         self.select_all_seq_btn.clicked.connect(self._select_all_sequences)
         self.select_all_files_btn.clicked.connect(self._select_all_files)
         self.clear_selection_btn.clicked.connect(self._clear_selection)
-        self.batch_edit_btn.clicked.connect(self._open_batch_edit_dialog)
+
+        # Batch edit button - ensure clean connection
+        try:
+            self.batch_edit_btn.clicked.disconnect()
+        except Exception:
+            pass  # No existing connections
+        self.batch_edit_btn.clicked.connect(self.on_batch_edit_btn_clicked)
 
         # File operation connections
+        try:
+            self.copy_selected_btn.clicked.disconnect()
+        except Exception:
+            pass
         self.copy_selected_btn.clicked.connect(self.file_operations_manager.on_copy_selected_click)
+        try:
+            self.move_selected_btn.clicked.disconnect()
+        except Exception:
+            pass
         self.move_selected_btn.clicked.connect(self.file_operations_manager.on_move_selected_click)
 
-        # # self.logger.debug(  # (Silenced for normal use. Re-enable for troubleshooting.)"UI signals connected.")
+
+
+    def _on_scan_clicked(self):
+        """Handle scan button click."""
+        # Start scan and show floating progress window
+        self.progress_window.show_progress(stage="Initializing Scan...", percent=0, details="Preparing to scan...")
+        self.refresh_btn.setEnabled(False)
+        self.scan_manager.refresh_scan_data()
 
     def update_progress_from_normalizer(self, progress_data: dict):
         """Update progress from normalizer. Expects a dict with 'value' and 'text'."""
@@ -479,7 +490,7 @@ class CleanIncomingsApp(QMainWindow):
 
     def _create_main_layout(self, parent_layout):
         """Create the main layout with resizable panels using QSplitter."""
-        # Main horizontal splitter
+        # Main horizontal splitter (now includes image viewer on the right)
         self.main_horizontal_splitter = QSplitter(Qt.Horizontal)
         
         # Create source tree section
@@ -488,8 +499,11 @@ class CleanIncomingsApp(QMainWindow):
         # Create preview section  
         self._create_preview_section()
         
-        # Set initial splitter sizes (400px for source tree, rest for preview)
-        self.main_horizontal_splitter.setSizes([400, 1100])
+        # Create the collapsible image viewer panel
+        self._create_image_viewer_panel()
+        
+        # Set initial splitter sizes (400px for source tree, most space for preview, collapsed width for image viewer)
+        self.main_horizontal_splitter.setSizes([400, 1100, 30])  # Third panel starts collapsed
         
         parent_layout.addWidget(self.main_horizontal_splitter, stretch=1)  # Main area gets all extra space
 
@@ -581,7 +595,7 @@ class CleanIncomingsApp(QMainWindow):
 
         self.batch_edit_btn = QPushButton("Batch Edit")
         self.batch_edit_btn.setMaximumWidth(110)
-        self.batch_edit_btn.clicked.connect(self._open_batch_edit_dialog)
+        self.batch_edit_btn.clicked.connect(self.on_batch_edit_btn_clicked)
         header_layout.addWidget(self.batch_edit_btn)
         
         header_layout.addStretch()
@@ -608,67 +622,297 @@ class CleanIncomingsApp(QMainWindow):
             item = selected[0]
             item_data = item.data(0, Qt.UserRole) or {}
             is_sequence = item_data.get('type', '').lower() == 'sequence' and item_data.get('sequence_info')
+            
+            # Check if operations are possible
+            has_destination = bool(self.selected_destination_folder.get())
+            has_multiple_items = len(selected) > 1
+            
             menu = QMenu(self.preview_tree)
-            action_vlc = QAction("Play with VLC", self.preview_tree)
-            action_ffplay = QAction("Play with ffplay", self.preview_tree)
-            action_show_data = QAction("Show Item Data", self.preview_tree)
-            action_copy_path = QAction("Copy Path to Clipboard", self.preview_tree)
-            action_print_console = QAction("Print Item to Console", self.preview_tree)
-            menu.addAction(action_vlc)
-            menu.addAction(action_ffplay)
+            
+            # Primary operations at the top
+            action_copy = QAction("Copy Selected", self.preview_tree)
+            action_move = QAction("Move Selected", self.preview_tree)
+            action_batch_edit = QAction("Batch Edit", self.preview_tree)
+            
+            # Add icons to primary operations
+            if hasattr(self, 'widget_factory'):
+                copy_icon = self.widget_factory.get_icon('copy')
+                if not copy_icon.isNull():
+                    action_copy.setIcon(copy_icon)
+                
+                move_icon = self.widget_factory.get_icon('move')
+                if not move_icon.isNull():
+                    action_move.setIcon(move_icon)
+                
+                batch_edit_icon = self.widget_factory.get_icon('edit')
+                if not batch_edit_icon.isNull():
+                    action_batch_edit.setIcon(batch_edit_icon)
+            
+            # Enable/disable based on conditions
+            action_copy.setEnabled(has_destination)
+            action_move.setEnabled(has_destination)
+            action_batch_edit.setEnabled(True)  # Always enabled if items are selected
+            
+            # Add tooltips for disabled actions
+            if not has_destination:
+                action_copy.setToolTip("Select a destination folder first")
+                action_move.setToolTip("Select a destination folder first")
+            
+            menu.addAction(action_copy)
+            menu.addAction(action_move)
+            menu.addAction(action_batch_edit)
+            menu.addSeparator()
+            
+            # Playback options
+            action_djv = QAction("Open in DJV", self.preview_tree)
+            action_mrv2 = QAction("Open in MRV2", self.preview_tree)
+            action_nuke_player = QAction("Open in Nuke Player", self.preview_tree)
+            action_nuke_player.setToolTip("Launch Nuke Player/HieroPlayer as standalone viewer")
+            action_nuke = QAction("Send to Nuke", self.preview_tree)
+            action_nuke.setToolTip("Send Read node to running Nuke session via socket")
+            
+            # Add icons to playback options
+            if hasattr(self, 'widget_factory'):
+                video_icon = self.widget_factory.get_icon('video')
+                image_icon = self.widget_factory.get_icon('image')
+                
+                if not video_icon.isNull():
+                    action_djv.setIcon(video_icon)
+                    action_mrv2.setIcon(video_icon)
+                    
+                if not image_icon.isNull():
+                    action_nuke_player.setIcon(image_icon)
+                    action_nuke.setIcon(image_icon)
+            
+            # Add professional media player options
+            menu.addAction(action_djv)
+            menu.addAction(action_mrv2)
+            menu.addAction(action_nuke_player)
+            menu.addAction(action_nuke)
+            
             if is_sequence:
                 action_show_seq = QAction("Show Sequence Frame List", self.preview_tree)
+                if hasattr(self, 'widget_factory'):
+                    seq_icon = self.widget_factory.get_icon('sequence')
+                    if not seq_icon.isNull():
+                        action_show_seq.setIcon(seq_icon)
                 menu.addAction(action_show_seq)
+            
             menu.addSeparator()
+            
+            # Debug/Info options
+            action_show_data = QAction("Show Item Data", self.preview_tree)
+            action_copy_path = QAction("Copy Path to Clipboard", self.preview_tree)
+            action_open_explorer = QAction("Open in Explorer", self.preview_tree)
+            action_print_console = QAction("Print Item to Console", self.preview_tree)
+            
+            # Add icons to debug/info options
+            if hasattr(self, 'widget_factory'):
+                info_icon = self.widget_factory.get_icon('info')
+                if not info_icon.isNull():
+                    action_show_data.setIcon(info_icon)
+                
+                clipboard_icon = self.widget_factory.get_icon('copy')
+                if not clipboard_icon.isNull():
+                    action_copy_path.setIcon(clipboard_icon)
+                
+                folder_icon = self.widget_factory.get_icon('folder_open')
+                if not folder_icon.isNull():
+                    action_open_explorer.setIcon(folder_icon)
+                
+                console_icon = self.widget_factory.get_icon('debug')
+                if not console_icon.isNull():
+                    action_print_console.setIcon(console_icon)
+            
             menu.addAction(action_show_data)
             menu.addAction(action_copy_path)
+            menu.addAction(action_open_explorer)
             menu.addAction(action_print_console)
-            def play_vlc():
-                # print("[DEBUG CONTEXT MENU] VLC item_data:", item_data)
-                # print("[DEBUG CONTEXT MENU] VLC path:", item_data.get('path'))
-                # print("[DEBUG CONTEXT MENU] VLC name:", item_data.get('name'))
+            
+            # Connect primary operation handlers
+            def copy_selected():
+                if hasattr(self, 'file_operations_manager'):
+                    self.file_operations_manager.on_copy_selected_click()
+                else:
+                    QMessageBox.warning(self, "Copy", "File operations manager not available.")
+            
+            def move_selected():
+                if hasattr(self, 'file_operations_manager'):
+                    self.file_operations_manager.on_move_selected_click()
+                else:
+                    QMessageBox.warning(self, "Move", "File operations manager not available.")
+            
+            def batch_edit():
+                self.on_batch_edit_btn_clicked()
+            
+            action_copy.triggered.connect(copy_selected)
+            action_move.triggered.connect(move_selected)
+            action_batch_edit.triggered.connect(batch_edit)
+            
+            # Connect playback handlers
+            def play_djv():
                 # Always use the ACTUAL source_path for playback (never destination fields)
                 media_path = item_data.get('source_path') or item_data.get('path')
-                # print("[DEBUG CONTEXT MENU] VLC media_path (to player):", media_path)
-                if hasattr(self, 'play_with_vlc_handler'):
-                    if is_sequence:
-                        self.play_with_vlc_handler(item_data['sequence_info'])
-                    else:
-                        self.play_with_vlc_handler(media_path)
-                elif hasattr(self, 'play_with_vlc'):
-                    self.play_with_vlc(media_path)
+                if hasattr(self, 'media_player_utils') and hasattr(self.media_player_utils, 'play_with_djv_handler'):
+                    try:
+                        if is_sequence:
+                            result = self.media_player_utils.play_with_djv_handler(item_data['sequence_info'])
+                        else:
+                            result = self.media_player_utils.play_with_djv_handler(media_path)
+                        
+                        if result:
+                            if hasattr(self, 'status_label'):
+                                self.status_label.setText(f"Launched DJV for: {os.path.basename(media_path)}")
+                        else:
+                            QMessageBox.warning(self, "DJV", "DJV Player not found. Please install DJV.")
+                    except Exception as e:
+                        QMessageBox.warning(self, "DJV", f"Failed to launch DJV: {e}")
                 else:
-                    QMessageBox.warning(self, "VLC Playback", "VLC playback handler is not implemented.")
-            def play_ffplay():
-                # print("[DEBUG CONTEXT MENU] FFPLAY item_data:", item_data)
-                # print("[DEBUG CONTEXT MENU] FFPLAY path:", item_data.get('path'))
-                # print("[DEBUG CONTEXT MENU] FFPLAY name:", item_data.get('name'))
+                    QMessageBox.warning(self, "DJV", "DJV Player functionality is not available.")
+            
+            def play_mrv2():
                 # Always use the ACTUAL source_path for playback (never destination fields)
                 media_path = item_data.get('source_path') or item_data.get('path')
-                # print("[DEBUG CONTEXT MENU] FFPLAY media_path (to player):", media_path)
-                if hasattr(self, 'play_with_ffplay_handler'):
-                    if is_sequence:
-                        self.play_with_ffplay_handler(item_data['sequence_info'])
-                    else:
-                        self.play_with_ffplay_handler(media_path)
+                if hasattr(self, 'media_player_utils') and hasattr(self.media_player_utils, 'play_with_mrv2_handler'):
+                    try:
+                        if is_sequence:
+                            result = self.media_player_utils.play_with_mrv2_handler(item_data['sequence_info'])
+                        else:
+                            result = self.media_player_utils.play_with_mrv2_handler(media_path)
+                        
+                        if result:
+                            if hasattr(self, 'status_label'):
+                                self.status_label.setText(f"Launched MRV2 for: {os.path.basename(media_path)}")
+                        else:
+                            QMessageBox.warning(self, "MRV2", "MRV2 Player not found. Please install MRV2.")
+                    except Exception as e:
+                        QMessageBox.warning(self, "MRV2", f"Failed to launch MRV2: {e}")
                 else:
-                    QMessageBox.warning(self, "ffplay Playback", "ffplay playback handler is not implemented.")
-            action_vlc.triggered.connect(play_vlc)
-            action_ffplay.triggered.connect(play_ffplay)
+                    QMessageBox.warning(self, "MRV2", "MRV2 Player functionality is not available.")
+            
+            def play_nuke_player():
+                # Always use the ACTUAL source_path for playback (never destination fields)
+                media_path = item_data.get('source_path') or item_data.get('path')
+                if hasattr(self, 'media_player_utils') and hasattr(self.media_player_utils, 'play_with_nuke_player_handler'):
+                    try:
+                        if is_sequence:
+                            result = self.media_player_utils.play_with_nuke_player_handler(item_data['sequence_info'])
+                        else:
+                            result = self.media_player_utils.play_with_nuke_player_handler(media_path)
+                        
+                        if result:
+                            if hasattr(self, 'status_label'):
+                                self.status_label.setText(f"Launched Nuke Player for: {os.path.basename(media_path)}")
+                        else:
+                            QMessageBox.warning(self, "Nuke Player", "Nuke Player not found. Please install Nuke.")
+                    except Exception as e:
+                        QMessageBox.warning(self, "Nuke Player", f"Failed to launch Nuke Player: {e}")
+                else:
+                    QMessageBox.warning(self, "Nuke Player", "Nuke Player functionality is not available.")
+            
+            def play_nuke_full():
+                # Always use the ACTUAL source_path for playback (never destination fields)
+                media_path = item_data.get('source_path') or item_data.get('path')
+                if hasattr(self, 'media_player_utils') and hasattr(self.media_player_utils, 'play_with_nuke_full_handler'):
+                    try:
+                        if is_sequence:
+                            result = self.media_player_utils.play_with_nuke_full_handler(item_data['sequence_info'])
+                        else:
+                            result = self.media_player_utils.play_with_nuke_full_handler(media_path)
+                        
+                        if result:
+                            if hasattr(self, 'status_label'):
+                                self.status_label.setText(f"Sent to Nuke: {os.path.basename(media_path)}")
+                        else:
+                            QMessageBox.warning(self, "Send to Nuke", "Nuke not found or not running with socket server. Please install Nuke and enable NukeServerSocket.")
+                    except Exception as e:
+                        QMessageBox.warning(self, "Send to Nuke", f"Failed to send to Nuke: {e}")
+                else:
+                    QMessageBox.warning(self, "Send to Nuke", "Send to Nuke functionality is not available.")
+            
+            action_djv.triggered.connect(play_djv)
+            action_mrv2.triggered.connect(play_mrv2)
+            action_nuke_player.triggered.connect(play_nuke_player)
+            action_nuke.triggered.connect(play_nuke_full)
 
+            # Connect debug/info handlers
             def show_item_data():
                 data_str = json.dumps(item_data, indent=2)
                 QMessageBox.information(self, "Item Data", data_str)
+            
             def copy_path():
-                path = item_data.get('path', '')
+                path = item_data.get('source_path') or item_data.get('path', '')
+                if path:
+                    from PyQt5.QtWidgets import QApplication
+                    QApplication.clipboard().setText(path)
+                    if hasattr(self, 'status_label'):
+                        self.status_label.setText(f"Copied path to clipboard: {path}")
+                else:
+                    QMessageBox.warning(self, "Copy Path", "No path available to copy.")
+            
+            def open_in_explorer():
+                """Open the folder containing the selected file/sequence in the system file manager."""
+                import subprocess
+                import platform
+                
+                # Get the source path of the item
+                source_path = item_data.get('source_path') or item_data.get('path', '')
+                if not source_path:
+                    QMessageBox.warning(self, "Open in Explorer", "No source path available for this item.")
+                    return
+                
+                # For sequences, get the directory from sequence_info if available
+                if is_sequence and item_data.get('sequence_info'):
+                    seq_info = item_data['sequence_info']
+                    if seq_info.get('directory'):
+                        folder_path = seq_info['directory']
+                    else:
+                        folder_path = os.path.dirname(source_path)
+                else:
+                    # For regular files, get the parent directory
+                    folder_path = os.path.dirname(source_path)
+                
+                if not folder_path or not os.path.exists(folder_path):
+                    QMessageBox.warning(self, "Open in Explorer", f"Folder not found: {folder_path}")
+                    return
+                
+                try:
+                    system = platform.system()
+                    if system == "Windows":
+                        # Use os.startfile for Windows - it's more reliable
+                        os.startfile(folder_path)
+                    elif system == "Darwin":  # macOS
+                        subprocess.run(["open", folder_path], check=True)
+                    else:  # Linux and other Unix-like systems
+                        subprocess.run(["xdg-open", folder_path], check=True)
+                    
+                    if hasattr(self, 'status_label'):
+                        self.status_label.setText(f"Opened folder: {folder_path}")
+                        
+                except Exception as e:
+                    QMessageBox.warning(self, "Open in Explorer", f"Failed to open folder: {e}")
+                    print(f"[ERROR] Failed to open folder {folder_path}: {e}")
+            
+            def print_item():
+                print(f"[CONTEXT MENU] Item data: {json.dumps(item_data, indent=2)}")
+                if hasattr(self, 'status_label'):
+                    self.status_label.setText("Item data printed to console.")
+            
             def show_sequence_frames():
                 if is_sequence:
                     seq = item_data['sequence_info']
                     frames = seq.get('files', [])
                     frame_names = [f.get('filename', str(f)) if isinstance(f, dict) else str(f) for f in frames]
                     QMessageBox.information(self, "Sequence Frames", "\n".join(frame_names) if frame_names else "No frames found.")
+            
+            action_show_data.triggered.connect(show_item_data)
+            action_copy_path.triggered.connect(copy_path)
+            action_open_explorer.triggered.connect(open_in_explorer)
+            action_print_console.triggered.connect(print_item)
+            
             if is_sequence:
                 action_show_seq.triggered.connect(show_sequence_frames)
+            
             menu.exec_(self.preview_tree.viewport().mapToGlobal(point))
         self.preview_tree.customContextMenuRequested.connect(show_preview_context_menu)
         
@@ -693,6 +937,42 @@ class CleanIncomingsApp(QMainWindow):
 
         
         self.main_horizontal_splitter.addWidget(preview_group)
+
+    def _create_image_viewer_panel(self):
+        """Create the collapsible image viewer panel on the right side."""
+        # Create the image viewer panel
+        self.image_viewer_panel = CollapsibleImageViewer(self, self)
+        
+        # Connect the panel toggle signal to handle splitter resizing
+        self.image_viewer_panel.panel_toggled.connect(self._on_image_viewer_toggled)
+        
+        # Add to the main splitter
+        self.main_horizontal_splitter.addWidget(self.image_viewer_panel)
+    
+    def _on_image_viewer_toggled(self, is_expanded: bool):
+        """Handle image viewer panel toggle to adjust splitter sizes."""
+        try:
+            current_sizes = self.main_horizontal_splitter.sizes()
+            total_width = sum(current_sizes)
+            
+            if is_expanded:
+                # Panel expanded - allocate space for it
+                source_width = 400  # Keep source tree width fixed
+                viewer_width = 450  # Image viewer preferred width
+                preview_width = max(300, total_width - source_width - viewer_width)  # Rest for preview
+                new_sizes = [source_width, preview_width, viewer_width]
+            else:
+                # Panel collapsed - redistribute space
+                source_width = 400  # Keep source tree width fixed
+                viewer_width = 30   # Collapsed width
+                preview_width = total_width - source_width - viewer_width  # Rest for preview
+                new_sizes = [source_width, preview_width, viewer_width]
+            
+            self.main_horizontal_splitter.setSizes(new_sizes)
+            
+        except Exception as e:
+            if hasattr(self, 'logger'):
+                self.logger.warning(f"Error adjusting splitter sizes: {e}")
 
     def _configure_profiles(self):
         """Configure profiles based on loaded data and saved settings."""
@@ -736,6 +1016,19 @@ class CleanIncomingsApp(QMainWindow):
             if ui_state: # Check if ui_state dictionary is not empty
                 self.settings.restore_ui_state(ui_state)
                 # # self.logger.debug(  # (Silenced for normal use. Re-enable for troubleshooting.)"UI state restored from settings.")
+
+            # On startup: use default_source_folder if set, else source_folder
+            source_folder = ui_state.get("default_source_folder") or ui_state.get("source_folder")
+            if source_folder:
+                self.selected_source_folder.set(source_folder)
+                if hasattr(self, 'source_folder_entry'):
+                    self.source_folder_entry.setText(source_folder)
+            # On startup: use default_destination_folder if set, else destination_folder
+            destination_folder = ui_state.get("default_destination_folder") or ui_state.get("destination_folder")
+            if destination_folder:
+                self.selected_destination_folder.set(destination_folder)
+                if hasattr(self, 'dest_folder_entry'):
+                    self.dest_folder_entry.setText(destination_folder)
         except Exception as e:
             self.logger.error(f"Error loading initial settings: {e}")
 
@@ -762,7 +1055,8 @@ class CleanIncomingsApp(QMainWindow):
     # Placeholder methods for the various UI actions
     def _select_source_folder(self):
         """Handle source folder selection."""
-        folder = QFileDialog.getExistingDirectory(self, "Select Source Folder")
+        current_path = self.source_folder_entry.text().strip()
+        folder = QFileDialog.getExistingDirectory(self, "Select Source Folder", directory=current_path if current_path else "")
         if folder:
             self.selected_source_folder.set(folder)
             self.source_folder_entry.setText(folder)
@@ -770,7 +1064,8 @@ class CleanIncomingsApp(QMainWindow):
 
     def _select_destination_folder(self):
         """Handle destination folder selection."""
-        folder = QFileDialog.getExistingDirectory(self, "Select Destination Folder")
+        current_path = self.dest_folder_entry.text().strip()
+        folder = QFileDialog.getExistingDirectory(self, "Select Destination Folder", directory=current_path if current_path else "")
         if folder:
             self.selected_destination_folder.set(folder)
             self.dest_folder_entry.setText(folder)
@@ -879,138 +1174,251 @@ class CleanIncomingsApp(QMainWindow):
         self.preview_tree.clearSelection()
         self._on_tree_selection_change()
 
+    def on_batch_edit_btn_clicked(self):
+        """Handle batch edit button click with proper debouncing."""
+        print("[DEBUG] Batch edit button clicked")
+        # Prevent rapid double-clicks
+        if hasattr(self, '_batch_edit_in_progress') and self._batch_edit_in_progress:
+            print("[DEBUG] Batch edit already in progress, ignoring click")
+            return
+        
+        self._batch_edit_in_progress = True
+        try:
+            self._open_batch_edit_dialog()
+        finally:
+            # Reset the flag after a short delay to prevent rapid clicking
+            QTimer.singleShot(500, lambda: setattr(self, '_batch_edit_in_progress', False))
+
     def _open_batch_edit_dialog(self):
         """
-        Open batch edit dialog for selected preview items. Prevents multiple dialogs from being open at once.
-        Ensures only one signal connection per dialog instance. Adds debug prints for troubleshooting.
+        Open batch edit dialog for selected preview items.
+        Simplified version with proper cleanup.
         """
+        # Single guard check - if dialog exists and is visible, just raise it
+        if hasattr(self, 'batch_edit_dialog') and self.batch_edit_dialog is not None:
+            if self.batch_edit_dialog.isVisible():
+                print("[DEBUG] Dialog already visible, raising it")
+                self.batch_edit_dialog.raise_()
+                self.batch_edit_dialog.activateWindow()
+                return
+            else:
+                # Dialog exists but not visible - clean it up properly
+                print("[DEBUG] Cleaning up existing hidden dialog")
+                self._cleanup_batch_dialog()
+
+        print("[DEBUG] Creating new batch edit dialog...")
+        
+        # Get selected items
         selected_preview_items_data = []
         if hasattr(self, 'preview_tree') and self.preview_tree.selectedItems():
             for item_widget in self.preview_tree.selectedItems():
                 item_data = item_widget.data(0, Qt.UserRole)
                 if item_data and isinstance(item_data, dict):
                     selected_preview_items_data.append(item_data)
-                else:
-                    print(f"Warning: Preview item {item_widget.text(0)} lacks expected data for batch editing.")
 
         if not selected_preview_items_data:
-            QMessageBox.information(self, "No Items Selected", "Please select items in the preview tree to batch edit.")
+            QMessageBox.information(self, "No Items Selected", 
+                                "Please select items in the preview tree to batch edit.")
             return
 
         if not self.normalizer:
-            QMessageBox.critical(self, "Error", "Normalizer is not available. Cannot perform batch edit.")
+            QMessageBox.critical(self, "Error", 
+                            "Normalizer is not available. Cannot perform batch edit.")
             return
 
-        # --- Prevent multiple dialogs ---
-        if hasattr(self, 'batch_edit_dialog') and self.batch_edit_dialog is not None:
-            if self.batch_edit_dialog.isVisible():
-                self.batch_edit_dialog.raise_()
-                self.batch_edit_dialog.activateWindow()
-                return
-            else:
-                self.batch_edit_dialog = None  # Reset if closed
-
+        # Create and show dialog
         try:
             self.batch_edit_dialog = BatchEditDialogPyQt5(
                 parent=self,
                 items=selected_preview_items_data,
-                normalizer=self.normalizer
+                normalizer=self.normalizer,
+                profile_name=self.selected_profile_name.get()
             )
-            # Only connect the signal ONCE per dialog instance
+            
+            # Connect signals
             self.batch_edit_dialog.applied_batch_changes.connect(self._handle_applied_batch_changes)
-            result = self.batch_edit_dialog.exec_()
-            self.batch_edit_dialog = None  # Reset after dialog closes
-            if result == QDialog.Accepted:
-                print("Batch edit dialog accepted by user.")
-            else:
-                print("Batch edit dialog cancelled by user.")
+            self.batch_edit_dialog.finished.connect(self._on_batch_edit_dialog_finished)
+            
+            print("[DEBUG] Showing batch edit dialog...")
+            self.batch_edit_dialog.show()  # Use show() instead of exec_()
+            
         except Exception as e:
-            QMessageBox.critical(self, "Batch Edit Error", f"Could not open batch edit dialog:\n{e}")
+            QMessageBox.critical(self, "Batch Edit Error", 
+                            f"Could not open batch edit dialog:\n{e}")
             print(f"Error opening batch edit dialog: {e}")
+            self._cleanup_batch_dialog()
 
-    def _handle_applied_batch_changes(self, changes: List[Dict[str, Any]]):
+    def _on_batch_edit_dialog_finished(self, result):
+        """Handle batch edit dialog finish event."""
+        print(f"[DEBUG] Batch edit dialog finished with result={result}")
+        self._cleanup_batch_dialog()
+
+    def _cleanup_batch_dialog(self):
+        """Properly clean up the batch edit dialog."""
+        if hasattr(self, 'batch_edit_dialog') and self.batch_edit_dialog is not None:
+            print("[DEBUG] Cleaning up batch edit dialog...")
+            try:
+                # Disconnect signals first
+                self.batch_edit_dialog.applied_batch_changes.disconnect()
+                self.batch_edit_dialog.finished.disconnect()
+            except Exception:
+                pass  # Signals might already be disconnected
+            
+            # Schedule for deletion and clear reference
+            dialog = self.batch_edit_dialog
+            self.batch_edit_dialog = None
+            dialog.deleteLater()
+            print("[DEBUG] Batch edit dialog cleaned up")
+
+    def _handle_applied_batch_changes(self, changes: dict):
         """
-        Handle the changes emitted from the BatchEditDialog. Adds debug prints and always forces a full preview tree refresh for UI sync.
+        Apply batch changes to all selected preview items.
         """
-        print(f"[DEBUG] _handle_applied_batch_changes received: {changes}")
+        print(f"[DEBUG] Applying batch changes: {changes}")
         if not changes:
-            print("No changes were applied from batch edit dialog.")
             return
-
+            
         selected_tree_items = self.preview_tree.selectedItems()
         if not selected_tree_items:
-            print("No items selected in the preview tree to apply changes to.")
             return
             
-        print(f"Applying batch changes to {len(selected_tree_items)} items: {changes}")
-        
         updated_item_ids = []
-        items_to_re_scan_for_sequences = False
-
         for tree_item_widget in selected_tree_items:
-            original_item_data = tree_item_widget.data(0, Qt.UserRole)
-            if not original_item_data or not isinstance(original_item_data, dict):
-                print(f"Warning: Skipping item {tree_item_widget.text(0)} due to missing or invalid data.")
+            item_data = tree_item_widget.data(0, Qt.UserRole)
+            if not item_data or not isinstance(item_data, dict):
                 continue
-
-            item_id = original_item_data.get('id')
+                
+            item_id = item_data.get('id')
             if not item_id:
-                print(f"Warning: Skipping item {tree_item_widget.text(0)} because it has no ID.")
                 continue
-
-            # Create a new dictionary for the modified data to avoid direct mutation issues
-            # if the original_item_data is referenced elsewhere or needs to remain pristine until a full commit.
-            modified_item_data = original_item_data.copy()
-            
-            change_applied_to_this_item = False
-            for change_instruction in changes:
-                field_to_change = change_instruction['field']
-                new_value = change_instruction['value']
                 
-                if field_to_change in modified_item_data and modified_item_data[field_to_change] == new_value:
-                    continue # No actual change for this field
-
-                modified_item_data[field_to_change] = new_value
-                change_applied_to_this_item = True
-                
-                # Check if a change might affect sequence grouping (e.g., shot_name, task_name, version_number, or filename itself)
-                # This is a heuristic; your actual sequence detection logic might depend on more specific fields.
-                if field_to_change in ["shot_name", "task_name", "version_number", "filename"]:
-                    items_to_re_scan_for_sequences = True
+            modified_item_data = item_data.copy()
+            changed = False
             
-            if change_applied_to_this_item:
-                # Now, we need the TreeManager to handle this update.
-                # The TreeManager should internally call the normalizer to get the new display name, path, etc.
-                # and then update the tree widget item.
+            # Update direct fields and normalized_parts
+            for field, value in changes.items():
+                if modified_item_data.get(field) != value:
+                    modified_item_data[field] = value
+                    changed = True
+                    
+                if 'normalized_parts' in modified_item_data and isinstance(modified_item_data['normalized_parts'], dict):
+                    if modified_item_data['normalized_parts'].get(field) != value:
+                        modified_item_data['normalized_parts'][field] = value
+                        changed = True
+                        
+            # If changes were made, regenerate the destination path
+            if changed:
+                # Only regenerate if no custom destination_path was explicitly provided
+                if 'destination_path' not in changes:
+                    try:
+                        # Get current profile and its rules
+                        profile_name = self.selected_profile_name.get()
+                        if self.normalizer and profile_name:
+                            # Get root output directory
+                            root_output_dir = self.selected_destination_folder.get()
+                            if not root_output_dir:
+                                root_output_dir = os.path.join(os.getcwd(), "output")
+                            
+                            # Use the normalizer's path generation method if available
+                            if hasattr(self.normalizer, 'get_batch_edit_preview_path'):
+                                # Create a dict of just the changes for this method
+                                field_changes = {k: v for k, v in changes.items() if k != 'destination_path'}
+                                new_destination_path = self.normalizer.get_batch_edit_preview_path(
+                                    modified_item_data, field_changes, root_output_dir
+                                )
+                                if new_destination_path and not new_destination_path.startswith("Error"):
+                                    modified_item_data['new_destination_path'] = new_destination_path
+                                    print(f"[BATCH_EDIT] Regenerated destination path for {modified_item_data.get('filename', 'unknown')}: {new_destination_path}")
+                                else:
+                                    print(f"[BATCH_EDIT] Failed to regenerate destination path for {modified_item_data.get('filename', 'unknown')}: {new_destination_path}")
+                            else:
+                                # Fallback to direct path generation
+                                from python.mapping_utils.generate_simple_target_path import generate_simple_target_path
+                                
+                                # Get profile rules
+                                if hasattr(self.normalizer, 'current_profile_rules') and self.normalizer.current_profile_rules:
+                                    profile_rules = self.normalizer.current_profile_rules
+                                elif hasattr(self.normalizer, 'all_profiles_data'):
+                                    profile_data = self.normalizer.all_profiles_data.get(profile_name, [])
+                                    if isinstance(profile_data, list):
+                                        profile_rules = profile_data
+                                    elif isinstance(profile_data, dict) and 'rules' in profile_data:
+                                        profile_rules = profile_data['rules']
+                                    else:
+                                        profile_rules = []
+                                else:
+                                    profile_rules = []
+                                
+                                if profile_rules:
+                                    filename = modified_item_data.get('filename', 'unknown.file')
+                                    normalized_parts = modified_item_data.get('normalized_parts', {})
+                                    
+                                    # Extract values from updated normalized parts
+                                    parsed_shot = normalized_parts.get('shot')
+                                    parsed_task = normalized_parts.get('task')
+                                    parsed_asset = normalized_parts.get('asset')
+                                    parsed_stage = normalized_parts.get('stage')
+                                    parsed_version = normalized_parts.get('version')
+                                    parsed_resolution = normalized_parts.get('resolution')
+                                    
+                                    # Generate new target path
+                                    path_result = generate_simple_target_path(
+                                        root_output_dir=root_output_dir,
+                                        profile_rules=profile_rules,
+                                        filename=filename,
+                                        parsed_shot=parsed_shot,
+                                        parsed_task=parsed_task,
+                                        parsed_asset=parsed_asset,
+                                        parsed_stage=parsed_stage,
+                                        parsed_version=parsed_version,
+                                        parsed_resolution=parsed_resolution
+                                    )
+                                    
+                                    new_target_path = path_result.get("target_path")
+                                    if new_target_path:
+                                        modified_item_data['new_destination_path'] = new_target_path
+                                        print(f"[BATCH_EDIT] Regenerated destination path for {filename}: {new_target_path}")
+                                    else:
+                                        # Handle ambiguous or failed path generation
+                                        if path_result.get("ambiguous_match"):
+                                            print(f"[BATCH_EDIT] Ambiguous path match for {filename}")
+                                        else:
+                                            print(f"[BATCH_EDIT] Failed to generate path for {filename}")
+                                else:
+                                    print(f"[BATCH_EDIT] No profile rules available for path regeneration")
+                        else:
+                            print(f"[BATCH_EDIT] No normalizer or profile available for path regeneration")
+                    except Exception as e:
+                        print(f"[BATCH_EDIT] Error regenerating path for {modified_item_data.get('filename', 'unknown')}: {e}")
+                        import traceback
+                        traceback.print_exc()
+                else:
+                    # Use custom destination_path override
+                    custom_path = changes['destination_path']
+                    filename = modified_item_data.get('filename', '')
+                    if custom_path and filename:
+                        # If custom path ends with filename, use as-is; otherwise append filename
+                        if custom_path.endswith(filename):
+                            modified_item_data['new_destination_path'] = custom_path
+                        else:
+                            modified_item_data['new_destination_path'] = os.path.join(custom_path, filename)
+                        print(f"[BATCH_EDIT] Using custom destination path for {filename}: {modified_item_data['new_destination_path']}")
+                
+                # Update the item via tree manager
                 if hasattr(self.tree_manager, 'update_item_properties_and_refresh_display'):
                     success = self.tree_manager.update_item_properties_and_refresh_display(item_id, modified_item_data)
                     if success:
                         updated_item_ids.append(item_id)
-                        # Update the item_data_map as well, as TreeManager might not do it directly
-                        # Or, ensure TreeManager does update its internal representation that feeds this map.
-                        self.preview_tree_item_data_map[item_id] = modified_item_data 
-                    else:
-                        print(f"Warning: Failed to update item {item_id} via TreeManager.")
-                else:
-                    print("Error: TreeManager does not have 'update_item_properties_and_refresh_display' method.")
-                    # Fallback or error message
-                    QMessageBox.critical(self, "Update Error", "TreeManager is missing a required update method.")
-                    return # Stop further processing if a critical component is missing
-            
+                        self.preview_tree_item_data_map[item_id] = modified_item_data
+                        
         if updated_item_ids:
-            # Always force a full preview tree refresh for UI sync (even if not sequence-affecting)
-            print("[DEBUG] Forcing full preview tree refresh after batch edit (UI sync).")
             self.tree_manager.rebuild_preview_tree_from_current_data(preserve_selection=True)
-            QMessageBox.information(self, 
-                                    "Batch Edit Applied", 
-                                    f"{len(updated_item_ids)} items were updated based on your selections.")
-            self.status_manager.set_status(f"Batch edit applied to {len(updated_item_ids)} items.")
-            print(f"Batch edit successfully applied to items: {updated_item_ids}")
-        elif changes: # If changes were requested but none were applied (e.g. all values were already set)
-            QMessageBox.information(self, "No Effective Changes", "The selected batch changes did not result in any modifications to the items (values might have been the same).")
-        # If no changes were requested initially, the dialog handles it.
-
-        self._on_tree_selection_change() # Update UI based on potential changes (e.g., button states)
+            if hasattr(self, 'status_label'):
+                self.status_label.setText(f"Batch edit applied to {len(updated_item_ids)} items.")
+        
+        # Update UI state
+        self._on_tree_selection_change()
+        print(f"[DEBUG] Batch changes applied to {len(updated_item_ids)} items")
 
     def _on_tree_selection_change(self):
         """Handle tree selection changes."""
@@ -1024,6 +1432,24 @@ class CleanIncomingsApp(QMainWindow):
         # Update selection stats
         stats_text = f"Selected: {len(selected_items)} items"
         self.selection_stats_label.setText(stats_text)
+        
+        # Update image viewer panel with selected sequence data
+        if hasattr(self, 'image_viewer_panel'):
+            if has_selection and len(selected_items) == 1:
+                # Single item selected - show in image viewer if it's a sequence
+                item = selected_items[0]
+                item_data = item.data(0, Qt.UserRole) or {}
+                
+                # Check if this is a sequence
+                if item_data.get('type', '').lower() == 'sequence' and item_data.get('sequence_info'):
+                    sequence_data = item_data.get('sequence_info', {})
+                    self.image_viewer_panel.set_sequence_data(sequence_data)
+                else:
+                    # Not a sequence, clear the viewer
+                    self.image_viewer_panel.set_sequence_data(None)
+            else:
+                # No selection or multiple items selected, clear the viewer
+                self.image_viewer_panel.set_sequence_data(None)
 
     def _on_preview_item_double_clicked(self, item, column):
         """Handle double-click on a preview tree item."""

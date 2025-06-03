@@ -42,9 +42,9 @@ class FileOperationsManager:
         self._batch_signal_helper = BatchProgressSignalHelper()
         self._batch_signal_helper.batch_progress_update.connect(self._on_batch_progress_update)
 
-    def copy_files(self, items_to_copy: List[Dict[str, Any]]):
+    def copy_files(self, items_to_copy: List[Dict[str, Any]], overwrite_existing: bool = False):
         """Copy selected files/sequences using batch operations for maximum efficiency."""
-        self._start_optimized_batch_operation("Copy", items_to_copy)
+        self._start_optimized_batch_operation("Copy", items_to_copy, overwrite_existing=overwrite_existing)
 
     def move_files(self, items_to_move: List[Dict[str, Any]]):
         """Move selected files/sequences using batch operations for maximum efficiency."""
@@ -107,7 +107,7 @@ class FileOperationsManager:
             print(f"[BATCH_SIGNAL_ERROR] Exception in _on_batch_progress_update: {err}")
             traceback.print_exc()
 
-    def _start_optimized_batch_operation(self, operation_type: str, items_to_process: List[Dict[str, Any]]):
+    def _start_optimized_batch_operation(self, operation_type: str, items_to_process: List[Dict[str, Any]], overwrite_existing: bool = False):
         """Start an optimized batch operation that groups sequences for maximum 10GbE performance."""
         self.current_batch_id = str(uuid.uuid4())
         self.current_operation_type = operation_type
@@ -144,12 +144,18 @@ class FileOperationsManager:
                             file_extension = os.path.splitext(base_names[0])[1]
                             pattern = f"{common_prefix}*{file_extension}"
                             
-                            # Skip redundant size calculation - not needed for copy/move operations
-                            # Progress will be tracked by file count instead of bytes
-                            total_size_bytes = 0  # Will be calculated during transfer if needed
+                            # Always calculate total size for sequence batches to enable accurate progress reporting
+                            total_size_bytes = 0
+                            for f in files_list:
+                                try:
+                                    file_path = f.get('path')
+                                    if file_path and os.path.isfile(file_path):
+                                        total_size_bytes += os.path.getsize(file_path)
+                                except Exception as e:
+                                    print(f"[BATCH_DEBUG] Could not get size for file {file_path}: {e}")
+                            print(f"[BATCH_DEBUG] Calculated total size for sequence batch: {total_size_bytes} bytes")
                             
-                            print(f"[BATCH_DEBUG] Skipping size calculation - will track progress by file count")
-                            
+                            # No per-batch dialog here; dialog is handled in main thread before starting batch copy
                             sequence_batch = {
                                 'type': 'sequence_batch',
                                 'source_dir': source_dir,
@@ -157,10 +163,10 @@ class FileOperationsManager:
                                 'pattern': pattern,
                                 'file_count': len(files_list),
                                 'total_size': total_size_bytes,
-                                'sequence_name': item_data.get('filename', 'Unknown Sequence')
+                                'sequence_name': item_data.get('filename', 'Unknown Sequence'),
+                                'overwrite_existing': overwrite_existing
                             }
                             sequence_batches.append(sequence_batch)
-                            
                             print(f"[BATCH_DEBUG] Created sequence batch:")
                             print(f"  Source: {source_dir}")
                             print(f"  Dest: {dest_dir}")
@@ -269,7 +275,8 @@ class FileOperationsManager:
                             status_callback=create_batch_progress_callback(),
                             transfer_id=transfer_id,
                             file_count=batch_data['file_count'],
-                            total_size=batch_data['total_size']
+                            total_size=batch_data['total_size'],
+                            overwrite_existing=batch_data.get('overwrite_existing', False)
                         )
                     else:
                         success, message = move_sequence_batch(
@@ -492,7 +499,14 @@ class FileOperationsManager:
 
     def on_copy_selected_click(self):
         """Handle copy button click - wrapper for backward compatibility."""
-        print("Copy button clicked")
+        import traceback
+        print("\n[DEBUG] ENTER on_copy_selected_click - stack trace:")
+        traceback.print_stack()
+        if getattr(self, '_copy_in_progress', False):
+            print("[GUARD] Copy already in progress, ignoring duplicate trigger.")
+            return
+        self._copy_in_progress = True
+        print("[DEBUG] Copy button clicked (guarded), _copy_in_progress set True")
         
         # Get selected items from the preview tree
         try:
@@ -506,17 +520,68 @@ class FileOperationsManager:
             if not destination_folder or not os.path.isdir(destination_folder):
                 self.app.status_manager.add_log_message("Invalid destination folder selected", "ERROR")
                 return
-            
-            # Use optimized batch operation
-            self.copy_files(selected_items)
-            
+
+            # --- Check for existing files in ALL sequence batches (main thread, before background op) ---
+            import glob
+            from PyQt5.QtWidgets import QMessageBox
+            sequence_items = [item for item in selected_items if item.get('type', 'file') == 'Sequence']
+            any_existing = False
+            existing_files_total = 0
+            sequence_patterns = []
+            for item in sequence_items:
+                sequence_info = item.get('sequence_info', {})
+                files_list = sequence_info.get('files', [])
+                sequence_dest_path = item.get('new_destination_path', '')
+                if files_list and sequence_dest_path:
+                    first_file_path = files_list[0].get('path', '')
+                    if first_file_path:
+                        source_dir = os.path.dirname(first_file_path)
+                        dest_dir = os.path.dirname(sequence_dest_path)
+                        base_names = [os.path.basename(f.get('path', '')) for f in files_list if f.get('path')]
+                        if base_names:
+                            common_prefix = self._find_common_prefix(base_names)
+                            file_extension = os.path.splitext(base_names[0])[1]
+                            pattern = f"{common_prefix}*{file_extension}"
+                            dest_pattern = os.path.join(dest_dir, pattern)
+                            found = glob.glob(dest_pattern)
+                            if found:
+                                any_existing = True
+                                existing_files_total += len(found)
+                                sequence_patterns.append((item, dest_pattern, len(found)))
+            overwrite_existing = False
+            if any_existing:
+                print("[DEBUG] Showing skip/replace dialog for existing files.")
+                msg_box = QMessageBox()
+                msg_box.setWindowTitle("Files Already Exist")
+                msg_box.setText(f"{existing_files_total} files already exist in the destination folder(s) for the selected sequences.\n\nDo you want to Skip existing files or Replace them?")
+                skip_btn = msg_box.addButton("Skip Existing", QMessageBox.AcceptRole)
+                overwrite_btn = msg_box.addButton("Replace All", QMessageBox.DestructiveRole)
+                cancel_btn = msg_box.addButton("Cancel", QMessageBox.RejectRole)
+                msg_box.setDefaultButton(skip_btn)
+                msg_box.exec_()
+                if msg_box.clickedButton() == skip_btn:
+                    overwrite_existing = False
+                elif msg_box.clickedButton() == overwrite_btn:
+                    overwrite_existing = True
+                else:
+                    self.app.status_manager.add_log_message("Batch copy cancelled by user (existing files detected)", "WARNING")
+                    return
+            print(f"[DEBUG] Calling self.copy_files with overwrite_existing={overwrite_existing}")
+            # Pass overwrite_existing to copy_files
+            self.copy_files(selected_items, overwrite_existing=overwrite_existing)
         except Exception as e:
             self.app.status_manager.add_log_message(f"Error starting copy operation: {str(e)}", "ERROR")
             print(f"Error in copy operation: {e}")
+        finally:
+            self._copy_in_progress = False
 
     def on_move_selected_click(self):
         """Handle move button click - wrapper for backward compatibility."""
-        print("Move button clicked")
+        if getattr(self, '_move_in_progress', False):
+            print("[GUARD] Move already in progress, ignoring duplicate trigger.")
+            return
+        self._move_in_progress = True
+        print("Move button clicked (guarded)")
         
         # Get selected items from the preview tree
         try:
@@ -537,3 +602,5 @@ class FileOperationsManager:
         except Exception as e:
             self.app.status_manager.add_log_message(f"Error starting move operation: {str(e)}", "ERROR")
             print(f"Error in move operation: {e}") 
+        finally:
+            self._move_in_progress = False

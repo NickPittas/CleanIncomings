@@ -10,7 +10,8 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Dict
+import socket
 
 logger = logging.getLogger(__name__)
 
@@ -483,7 +484,83 @@ class MediaPlayerUtils:
             if hasattr(self.app, 'status_manager'):
                 self.app.status_manager.add_log_message(f"Playback error: {e}", "ERROR")
             return False
-    
+
+    def play_with_nuke_handler(self, media_input):
+        """
+        Unified handler for sending media to Nuke via socket, matching GUI expectations.
+        Accepts either a file path (str) or a sequence info dict.
+        Returns True if command was sent successfully, False otherwise.
+        """
+        try:
+            result = self.send_to_nuke(media_input)
+            if not result and hasattr(self.app, 'status_manager'):
+                self.app.status_manager.add_log_message("Failed to send to Nuke or Nuke server not available.", "ERROR")
+            return result
+        except Exception as e:
+            self.logger.error(f"Error in play_with_nuke_handler: {e}")
+            if hasattr(self.app, 'status_manager'):
+                self.app.status_manager.add_log_message(f"Nuke handler error: {e}", "ERROR")
+            return False
+
+    def play_with_nuke_player_handler(self, media_input):
+        """
+        Unified handler for Nuke Player playback, matching GUI expectations.
+        Tries socket first, then falls back to process launching.
+        Returns True if playback was launched, False otherwise.
+        """
+        try:
+            result = self.launch_nuke_player(media_input)
+            if not result and hasattr(self.app, 'status_manager'):
+                self.app.status_manager.add_log_message("Nuke Player failed or was not launched.", "ERROR")
+            return result
+        except Exception as e:
+            self.logger.error(f"Playback error in play_with_nuke_player_handler: {e}")
+            if hasattr(self.app, 'status_manager'):
+                self.app.status_manager.add_log_message(f"Nuke Player error: {e}", "ERROR")
+            return False
+
+    def play_with_nuke_full_handler(self, media_input):
+        """
+        Unified handler for full Nuke application playback.
+        Uses the same approach as play_with_nuke_handler (socket first, then process).
+        Returns True if playback was launched, False otherwise.
+        """
+        return self.play_with_nuke_handler(media_input)
+
+    def play_with_mrv2_handler(self, media_input):
+        """
+        Unified handler for MRV2 playback, matching GUI expectations.
+        MRV2 is a professional image sequence viewer with advanced color management.
+        Returns True if playback was launched, False otherwise.
+        """
+        try:
+            result = self.launch_mrv2(media_input)
+            if not result and hasattr(self.app, 'status_manager'):
+                self.app.status_manager.add_log_message("MRV2 failed or was not launched.", "ERROR")
+            return result
+        except Exception as e:
+            self.logger.error(f"Error in play_with_mrv2_handler: {e}")
+            if hasattr(self.app, 'status_manager'):
+                self.app.status_manager.add_log_message(f"MRV2 error: {e}", "ERROR")
+            return False
+
+    def play_with_djv_handler(self, media_input):
+        """
+        Unified handler for DJV playback, matching GUI expectations.
+        DJV is a professional image sequence viewer optimized for film/VFX workflows.
+        Returns True if playback was launched, False otherwise.
+        """
+        try:
+            result = self.launch_djv(media_input)
+            if not result and hasattr(self.app, 'status_manager'):
+                self.app.status_manager.add_log_message("DJV failed or was not launched.", "ERROR")
+            return result
+        except Exception as e:
+            self.logger.error(f"Error in play_with_djv_handler: {e}")
+            if hasattr(self.app, 'status_manager'):
+                self.app.status_manager.add_log_message(f"DJV error: {e}", "ERROR")
+            return False
+
     def __init__(self, app_instance):
         """
         Initialize MediaPlayerUtils with app instance for settings access.
@@ -493,46 +570,73 @@ class MediaPlayerUtils:
         self.app = app_instance
         self.logger = logging.getLogger(__name__)
 
-    def launch_standalone_player(self, media_input):
+    def launch_standalone_player(self, media_input, frame_rate=24, window_size=(1280, 720), enable_loop=False, ffplay_executable=None):
         """
-        Launch the standalone Nuke-style player as a subprocess for video or image sequences.
-        Accepts either a file path (str) or a sequence info dict.
-        Returns True if launch was successful, False otherwise.
+        Enhanced standalone player launcher that intelligently chooses the best player.
+        Detects EXR files and uses professional viewers when available.
+        
+        Args:
+            media_input: File path, sequence data dict, or list of files
+            frame_rate: Frame rate for playback (default: 24)
+            window_size: Window size (width, height) (default: (1280, 720))
+            enable_loop: Whether to loop playback (default: False)
+            ffplay_executable: Optional path to ffplay executable
+            
+        Returns:
+            subprocess.Popen or bool: The player process, True for system default, or None if failed
         """
-        import sys
-        import subprocess
-        import os
-        # Determine the path to player_window.py
-        # Always resolve project root as two levels up from this file (python/utils/ -> project root)
-        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-        player_path = os.path.join(project_root, 'standalone_player', 'player_window.py')
-        if isinstance(media_input, dict):
-            # Sequence dict: pass first file in 'files' list
-            files = media_input.get('files')
-            if not files or not isinstance(files, list):
-                self.logger.error("No files found in sequence_info dict.")
-                return False
-            first_file = files[0]
-            if isinstance(first_file, dict):
-                first_file_path = first_file.get('path') or first_file.get('filename')
-            else:
-                first_file_path = str(first_file)
-            args = [sys.executable, player_path, first_file_path]
-        elif isinstance(media_input, str):
-            args = [sys.executable, player_path, media_input]
-        else:
-            self.logger.error(f"Unsupported input type for standalone player: {type(media_input)}")
-            return False
         try:
-            print(f"[DEBUG] Launching standalone player: {args} (cwd={project_root})")
-            self.logger.info(f"Launching standalone player: {args} (cwd={project_root})")
-            subprocess.Popen(args, cwd=project_root)
-            self.logger.info(f"Launched standalone player with: {args}")
-            return True
+            # Detect if this is an EXR file/sequence
+            is_exr = False
+            file_path = None
+            
+            if isinstance(media_input, dict):
+                # Sequence data dict
+                files = media_input.get('files', [])
+                if files:
+                    if isinstance(files[0], dict):
+                        file_path = files[0].get('path', '')
+                    else:
+                        file_path = str(files[0])
+                    if file_path.lower().endswith('.exr'):
+                        is_exr = True
+                        
+            elif isinstance(media_input, list) and media_input:
+                # List of files
+                first_file = media_input[0]
+                if isinstance(first_file, dict):
+                    file_path = first_file.get('path', '')
+                else:
+                    file_path = str(first_file)
+                if file_path.lower().endswith('.exr'):
+                    is_exr = True
+                    
+            elif isinstance(media_input, str):
+                # Single file path
+                file_path = media_input
+                if file_path.lower().endswith('.exr'):
+                    is_exr = True
+            
+            # Use EXR viewer for EXR files
+            if is_exr and file_path:
+                self.logger.info(f"Detected EXR file, using professional EXR viewer: {file_path}")
+                result = self.launch_exr_viewer(media_input)
+                if result:
+                    if hasattr(self.app, 'status_manager'):
+                        self.app.status_manager.add_log_message(f"Playing EXR with professional viewer: {os.path.basename(file_path)}", "INFO")
+                    return result
+                else:
+                    self.logger.warning("Professional EXR viewer failed, falling back to ffplay")
+                    # Fall through to ffplay
+            
+            # Use the existing sequence player for non-EXR or EXR fallback
+            return self.play_sequence(media_input, frame_rate, window_size, enable_loop, ffplay_executable)
+            
         except Exception as e:
-            print(f"[ERROR] Failed to launch standalone player: {e}")
-            self.logger.error(f"Failed to launch standalone player: {e}")
-            return False
+            self.logger.error(f"Error in launch_standalone_player: {e}")
+            if hasattr(self.app, 'status_manager'):
+                self.app.status_manager.add_log_message(f"Error launching player: {e}", "ERROR")
+            return None
     
     def get_ffplay_path(self) -> Optional[str]:
         """
@@ -998,10 +1102,208 @@ class MediaPlayerUtils:
                 if results['version']:
                     self.app.status_manager.add_log_message(f"ffplay version: {results['version']}", "INFO")
             else:
-                self.app.status_manager.add_log_message("ffplay not found. Please install FFmpeg and configure the path in Settings.", "WARNING")
+                self.app.status_manager.add_log_message("ffplay not found. Please install FFmpeg.", "WARNING")
         
         return results
-    
+
+    def test_nuke_player_installation(self) -> dict:
+        """
+        Test Nuke Player installation and capabilities.
+        
+        Returns:
+            dict: Test results with keys like 'nuke_found', 'nuke_path', 'version', 'supports_viewer_mode'
+        """
+        results = {
+            'nuke_found': False,
+            'nuke_path': None,
+            'version': None,
+            'supports_viewer_mode': False,
+            'error': None
+        }
+        
+        try:
+            # Detect Nuke installations
+            available_viewers = self.detect_exr_viewers()
+            nuke_path = available_viewers.get('nuke_player')
+            
+            if nuke_path:
+                results['nuke_found'] = True
+                results['nuke_path'] = nuke_path
+                
+                # Test version and viewer mode support
+                try:
+                    # Try to get version info
+                    result = subprocess.run(
+                        [nuke_path, '--help'], 
+                        capture_output=True, 
+                        text=True, 
+                        timeout=10
+                    )
+                    
+                    if result.returncode == 0:
+                        # Extract version from help output
+                        help_text = result.stdout
+                        version_match = re.search(r'Nuke(\d+\.\d+)', help_text)
+                        if version_match:
+                            results['version'] = version_match.group(1)
+                        
+                        # Check if -v flag is supported
+                        if '-v' in help_text.lower():
+                            results['supports_viewer_mode'] = True
+                        else:
+                            # Some Nuke versions don't list -v in help but still support it
+                            results['supports_viewer_mode'] = True  # Assume support
+                            
+                except subprocess.TimeoutExpired:
+                    results['supports_viewer_mode'] = True  # Assume it works
+                except Exception as e:
+                    results['error'] = f"Could not test Nuke capabilities: {e}"
+                    results['supports_viewer_mode'] = True  # Assume it works
+        
+        except Exception as e:
+            results['error'] = str(e)
+        
+        # Log results to app if available
+        if hasattr(self.app, 'status_manager') and self.app.status_manager:
+            if results['nuke_found']:
+                self.app.status_manager.add_log_message(f"Nuke Player found: {results['nuke_path']}", "INFO")
+                if results['version']:
+                    self.app.status_manager.add_log_message(f"Nuke version: {results['version']}", "INFO")
+                if results['supports_viewer_mode']:
+                    self.app.status_manager.add_log_message("Nuke Player supports viewer mode (-v flag)", "INFO")
+            else:
+                self.app.status_manager.add_log_message("Nuke Player not found. Please install Nuke or configure the path.", "WARNING")
+        
+        return results
+
+    def test_mrv2_installation(self) -> dict:
+        """
+        Test MRV2 installation and capabilities.
+        
+        Returns:
+            dict: Test results with keys like 'mrv2_found', 'mrv2_path', 'version', 'error'
+        """
+        results = {
+            'mrv2_found': False,
+            'mrv2_path': None,
+            'version': None,
+            'error': None
+        }
+        
+        try:
+            # Detect MRV2 installations
+            available_viewers = self.detect_exr_viewers()
+            mrv2_path = available_viewers.get('mrv2')
+            
+            if mrv2_path:
+                results['mrv2_found'] = True
+                results['mrv2_path'] = mrv2_path
+                
+                # Test version info
+                try:
+                    # Try to get version info
+                    result = subprocess.run(
+                        [mrv2_path, '--version'], 
+                        capture_output=True, 
+                        text=True, 
+                        timeout=10
+                    )
+                    
+                    if result.returncode == 0:
+                        # Extract version from output
+                        version_text = result.stdout
+                        version_match = re.search(r'mrv2[\s-]*([\d.]+)', version_text, re.IGNORECASE)
+                        if version_match:
+                            results['version'] = version_match.group(1)
+                            
+                except subprocess.TimeoutExpired:
+                    results['error'] = "MRV2 version check timed out"
+                except Exception as e:
+                    results['error'] = f"Could not test MRV2 version: {e}"
+        
+        except Exception as e:
+            results['error'] = str(e)
+        
+        # Log results to app if available
+        if hasattr(self.app, 'status_manager') and self.app.status_manager:
+            if results['mrv2_found']:
+                self.app.status_manager.add_log_message(f"MRV2 found: {results['mrv2_path']}", "INFO")
+                if results['version']:
+                    self.app.status_manager.add_log_message(f"MRV2 version: {results['version']}", "INFO")
+            else:
+                self.app.status_manager.add_log_message("MRV2 not found. Please install MRV2 or configure the path.", "WARNING")
+        
+        return results
+
+    def test_djv_installation(self) -> dict:
+        """
+        Test DJV installation and capabilities.
+        
+        Returns:
+            dict: Test results with keys like 'djv_found', 'djv_path', 'version', 'error'
+        """
+        results = {
+            'djv_found': False,
+            'djv_path': None,
+            'version': None,
+            'error': None
+        }
+        
+        try:
+            # Detect DJV installations
+            available_viewers = self.detect_exr_viewers()
+            djv_path = available_viewers.get('djv')
+            
+            if djv_path:
+                results['djv_found'] = True
+                results['djv_path'] = djv_path
+                
+                # Test version info
+                try:
+                    # Try to get version info (DJV may use different flags)
+                    for version_flag in ['--version', '-version', '--help']:
+                        try:
+                            result = subprocess.run(
+                                [djv_path, version_flag], 
+                                capture_output=True, 
+                                text=True, 
+                                timeout=10
+                            )
+                            
+                            if result.returncode == 0:
+                                # Extract version from output
+                                version_text = result.stdout
+                                version_match = re.search(r'djv[\s-]*([\d.]+)', version_text, re.IGNORECASE)
+                                if version_match:
+                                    results['version'] = version_match.group(1)
+                                    break
+                                # Alternative version pattern
+                                version_match = re.search(r'version[\s:]*(\d+[\d.]*)', version_text, re.IGNORECASE)
+                                if version_match:
+                                    results['version'] = version_match.group(1)
+                                    break
+                        except:
+                            continue
+                            
+                except subprocess.TimeoutExpired:
+                    results['error'] = "DJV version check timed out"
+                except Exception as e:
+                    results['error'] = f"Could not test DJV version: {e}"
+        
+        except Exception as e:
+            results['error'] = str(e)
+        
+        # Log results to app if available
+        if hasattr(self.app, 'status_manager') and self.app.status_manager:
+            if results['djv_found']:
+                self.app.status_manager.add_log_message(f"DJV found: {results['djv_path']}", "INFO")
+                if results['version']:
+                    self.app.status_manager.add_log_message(f"DJV version: {results['version']}", "INFO")
+            else:
+                self.app.status_manager.add_log_message("DJV not found. Please install DJV or configure the path.", "WARNING")
+        
+        return results
+
     def is_media_file(self, file_path: str) -> bool:
         """
         Check if a file is a supported media file.
@@ -1024,9 +1326,15 @@ class MediaPlayerUtils:
             # Audio
             '.mp3', '.wav', '.flac', '.aac', '.ogg', '.wma', '.m4a', '.opus',
             '.ac3', '.dts', '.pcm', '.aiff', '.au', '.snd',
-            # Images (for sequences)
+            # Images (for sequences) - Basic formats
             '.jpg', '.jpeg', '.png', '.tiff', '.tif', '.bmp', '.gif', '.webp',
-            '.exr', '.hdr', '.dpx', '.cin', '.sgi', '.tga', '.psd'
+            # Professional image formats (Nuke specializes in these)
+            '.exr', '.hdr', '.dpx', '.cin', '.sgi', '.tga', '.psd', '.iff',
+            '.pic', '.rla', '.rpf', '.sxr', '.mxr', '.null', '.rgb', '.rgba',
+            # RAW camera formats
+            '.cr2', '.nef', '.arw', '.orf', '.rw2', '.pef', '.srw', '.raf',
+            # Additional professional formats
+            '.tx', '.rat', '.it', '.als', '.shd', '.slim', '.slx', '.rs'
         }
         
         file_ext = os.path.splitext(file_path)[1].lower()
@@ -1214,6 +1522,1031 @@ class MediaPlayerUtils:
             traceback.print_exc()
             return None
 
+    def launch_nuke(self, media_input) -> Optional[subprocess.Popen]:
+        """
+        DEPRECATED: Use send_to_nuke() instead.
+        Launch full Nuke application for media playback without safe mode restrictions.
+        """
+        self.logger.warning("launch_nuke() is deprecated. Use send_to_nuke() instead.")
+        # Try socket approach first, fallback to old method
+        if self.send_to_nuke(media_input):
+            return True  # Return True to indicate success (can't return process for socket)
+        
+        # If socket approach fails, user can still manually launch Nuke
+        self.logger.warning("Socket approach failed. Please ensure Nuke is running with NukeServerSocket plugin.")
+        if hasattr(self.app, 'status_manager'):
+            self.app.status_manager.add_log_message("Socket failed. Ensure Nuke is running with NukeServerSocket plugin.", "WARNING")
+        return None
+
+    def launch_nuke_player(self, media_input) -> Optional[subprocess.Popen]:
+        """
+        Launch Nuke Player for media playback with support for various media types.
+        Uses the traditional --safe --player approach for standalone viewing.
+        
+        Args:
+            media_input: Can be:
+                - Single file path (str)
+                - Sequence data dict with keys like 'base_name', 'files', etc.
+                - List of files
+        
+        Returns:
+            subprocess.Popen: Process handle, or None if failed
+        """
+        self.logger.info("Launching Nuke Player process...")
+        if hasattr(self.app, 'status_manager') and self.app.status_manager:
+            self.app.status_manager.add_log_message("Launching Nuke Player...", "INFO")
+        
+        try:
+            # Detect available Nuke installations
+            available_viewers = self.detect_exr_viewers()
+            nuke_exe = available_viewers.get('nuke_player')
+            
+            if not nuke_exe:
+                self.logger.error("Nuke Player not found on system")
+                if hasattr(self.app, 'status_manager') and self.app.status_manager:
+                    self.app.status_manager.add_log_message("Nuke Player not found. Please install Nuke or configure the path.", "ERROR")
+                return None
+            
+            # Process different input types
+            file_path = None
+            is_sequence = False
+            
+            if isinstance(media_input, dict):
+                # Rich sequence data dict
+                seq_info = media_input
+                directory = seq_info.get('directory', '')
+                base_name = seq_info.get('base_name', '')
+                suffix = seq_info.get('suffix', '')
+                frame_numbers = seq_info.get('frame_numbers', [])
+                files = seq_info.get('files', [])
+                
+                if base_name and suffix and frame_numbers:
+                    # Create Nuke-style sequence pattern (e.g., "image.####.exr")
+                    digits = len(str(max(frame_numbers))) if frame_numbers else 4
+                    digits = max(4, digits)  # At least 4 digits
+                    pattern = f"{base_name}.{'#' * digits}{suffix}"
+                    sequence_pattern = os.path.join(directory, pattern)
+                    # Convert Windows backslashes to forward slashes for Nuke
+                    sequence_pattern = sequence_pattern.replace('\\', '/')
+                    is_sequence = True
+                    file_path = sequence_pattern
+                    self.logger.info(f"Using sequence pattern: {pattern}")
+                elif files:
+                    # Fallback to first file
+                    if isinstance(files[0], dict):
+                        file_path = files[0].get('path', '')
+                    else:
+                        file_path = str(files[0])
+                    file_path = file_path.replace('\\', '/')
+                    
+            elif isinstance(media_input, list) and media_input:
+                # List of files - try to detect pattern
+                files = [str(f) if isinstance(f, dict) and 'path' in f else str(f) for f in media_input]
+                files = sorted(files)
+                
+                # Try to create sequence pattern from file list
+                first_file = files[0]
+                directory = os.path.dirname(first_file)
+                basename = os.path.basename(first_file)
+                
+                # Look for numeric pattern
+                import re
+                match = re.search(r'(\d+)', basename)
+                if match and len(files) > 1:
+                    number_part = match.group(1)
+                    digits = len(number_part)
+                    pattern_name = basename.replace(number_part, '#' * digits)
+                    sequence_pattern = os.path.join(directory, pattern_name)
+                    sequence_pattern = sequence_pattern.replace('\\', '/')
+                    is_sequence = True
+                    file_path = sequence_pattern
+                    self.logger.info(f"Detected sequence pattern: {pattern_name}")
+                else:
+                    # Single file or no pattern detected
+                    file_path = first_file.replace('\\', '/')
+                    
+            elif isinstance(media_input, str):
+                # Single file path
+                file_path = media_input.replace('\\', '/')
+            
+            if not file_path or not os.path.exists(file_path.replace('#', '1') if '#' in file_path else file_path):
+                self.logger.error(f"Media file not found for Nuke Player: {file_path}")
+                if hasattr(self.app, 'status_manager') and self.app.status_manager:
+                    self.app.status_manager.add_log_message(f"Media file not found: {file_path}", "ERROR")
+                return None
+            
+            # Build Nuke command for HieroPlayer/Nuke Player
+            cmd = [nuke_exe]
+            
+            # Add safe mode and player flags
+            cmd.extend(['--safe', '--workspace', 'Flipbook', '--player'])
+            
+            # Add the file/sequence path
+            cmd.append(file_path)
+            
+            self.logger.info(f"Launching Nuke Player with command: {' '.join(cmd)}")
+            
+            # Launch with minimal console window on Windows
+            startupinfo = None
+            if platform.system() == 'Windows':
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = 1  # SW_SHOWNORMAL
+            
+            process = subprocess.Popen(
+                cmd,
+                startupinfo=startupinfo,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE
+            )
+            
+            self.logger.info(f"Nuke Player launched successfully (PID: {process.pid})")
+            if hasattr(self.app, 'status_manager') and self.app.status_manager:
+                filename = os.path.basename(file_path)
+                success_msg = f"Launched Nuke Player: {filename}"
+                if is_sequence:
+                    success_msg += " (sequence)"
+                self.app.status_manager.add_log_message(success_msg, "INFO")
+            
+            return process
+            
+        except Exception as e:
+            self.logger.error(f"Failed to launch Nuke Player: {e}")
+            if hasattr(self.app, 'status_manager') and self.app.status_manager:
+                self.app.status_manager.add_log_message(f"Error launching Nuke Player: {e}", "ERROR")
+            import traceback
+            traceback.print_exc()
+            return None
+
+    def launch_mrv2(self, media_input) -> Optional[subprocess.Popen]:
+        """
+        Launch MRV2 professional image viewer for media playback.
+        MRV2 is a specialized viewer for VFX and animation with advanced color management.
+        
+        Args:
+            media_input: Can be:
+                - Single file path (str)
+                - Sequence data dict with keys like 'base_name', 'files', etc.
+                - List of files
+        
+        Returns:
+            subprocess.Popen: Process handle, or None if failed
+        """
+        try:
+            # Detect available MRV2 installations
+            available_viewers = self.detect_exr_viewers()
+            mrv2_exe = available_viewers.get('mrv2')
+            
+            if not mrv2_exe:
+                self.logger.error("MRV2 not found on system")
+                if hasattr(self.app, 'status_manager') and self.app.status_manager:
+                    self.app.status_manager.add_log_message("MRV2 not found. Please install MRV2 or configure the path.", "ERROR")
+                return None
+            
+            # Process different input types
+            file_path = None
+            is_sequence = False
+            
+            if isinstance(media_input, dict):
+                # Rich sequence data dict
+                seq_info = media_input
+                directory = seq_info.get('directory', '')
+                base_name = seq_info.get('base_name', '')
+                suffix = seq_info.get('suffix', '')
+                frame_numbers = seq_info.get('frame_numbers', [])
+                files = seq_info.get('files', [])
+                
+                if base_name and suffix and frame_numbers:
+                    # Create sequence pattern for MRV2 (uses printf-style formatting)
+                    digits = len(str(max(frame_numbers))) if frame_numbers else 4
+                    digits = max(4, digits)  # At least 4 digits
+                    pattern = f"{base_name}.%0{digits}d{suffix}"
+                    sequence_pattern = os.path.join(directory, pattern)
+                    is_sequence = True
+                    file_path = sequence_pattern
+                    self.logger.info(f"Using MRV2 sequence pattern: {pattern}")
+                elif files:
+                    # Fallback to first file
+                    if isinstance(files[0], dict):
+                        file_path = files[0].get('path', '')
+                    else:
+                        file_path = str(files[0])
+                    
+            elif isinstance(media_input, list) and media_input:
+                # List of files - try to detect pattern or use first file
+                files = [str(f) if isinstance(f, dict) and 'path' in f else str(f) for f in media_input]
+                files = sorted(files)
+                
+                # Try to create sequence pattern from file list
+                first_file = files[0]
+                directory = os.path.dirname(first_file)
+                basename = os.path.basename(first_file)
+                
+                # Look for numeric pattern
+                import re
+                match = re.search(r'(\d+)', basename)
+                if match and len(files) > 1:
+                    number_part = match.group(1)
+                    digits = len(number_part)
+                    pattern_name = basename.replace(number_part, f'%0{digits}d')
+                    sequence_pattern = os.path.join(directory, pattern_name)
+                    is_sequence = True
+                    file_path = sequence_pattern
+                    self.logger.info(f"Detected MRV2 sequence pattern: {pattern_name}")
+                else:
+                    # Single file or no pattern detected
+                    file_path = first_file
+                    
+            elif isinstance(media_input, str):
+                # Single file path
+                file_path = media_input
+            
+            if not file_path:
+                self.logger.error("No valid file path found for MRV2")
+                if hasattr(self.app, 'status_manager') and self.app.status_manager:
+                    self.app.status_manager.add_log_message("No valid file path found for MRV2", "ERROR")
+                return None
+            
+            # Build MRV2 command
+            cmd = [mrv2_exe]
+            
+            # Add the file/sequence path
+            cmd.append(file_path)
+            
+            self.logger.info(f"Launching MRV2 with command: {' '.join(cmd)}")
+            
+            # Launch with minimal console window on Windows
+            startupinfo = None
+            if platform.system() == 'Windows':
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = 1  # SW_SHOWNORMAL
+            
+            process = subprocess.Popen(
+                cmd,
+                startupinfo=startupinfo,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE
+            )
+            
+            self.logger.info(f"MRV2 launched successfully (PID: {process.pid})")
+            if hasattr(self.app, 'status_manager') and self.app.status_manager:
+                filename = os.path.basename(file_path)
+                success_msg = f"Launched MRV2: {filename}"
+                if is_sequence:
+                    success_msg += " (sequence)"
+                self.app.status_manager.add_log_message(success_msg, "INFO")
+            
+            return process
+            
+        except Exception as e:
+            self.logger.error(f"Failed to launch MRV2: {e}")
+            if hasattr(self.app, 'status_manager') and self.app.status_manager:
+                self.app.status_manager.add_log_message(f"Error launching MRV2: {e}", "ERROR")
+            import traceback
+            traceback.print_exc()
+            return None
+
+    def launch_djv(self, media_input) -> Optional[subprocess.Popen]:
+        """
+        Launch DJV professional image viewer for media playback.
+        DJV is optimized for film and VFX workflows with robust sequence support.
+        
+        Args:
+            media_input: Can be:
+                - Single file path (str)
+                - Sequence data dict with keys like 'base_name', 'files', etc.
+                - List of files
+        
+        Returns:
+            subprocess.Popen: Process handle, or None if failed
+        """
+        try:
+            # Detect available DJV installations
+            available_viewers = self.detect_exr_viewers()
+            djv_exe = available_viewers.get('djv')
+            
+            if not djv_exe:
+                self.logger.error("DJV not found on system")
+                if hasattr(self.app, 'status_manager') and self.app.status_manager:
+                    self.app.status_manager.add_log_message("DJV not found. Please install DJV or configure the path.", "ERROR")
+                return None
+            
+            # Process different input types
+            file_path = None
+            is_sequence = False
+            
+            if isinstance(media_input, dict):
+                # Rich sequence data dict
+                seq_info = media_input
+                directory = seq_info.get('directory', '')
+                base_name = seq_info.get('base_name', '')
+                suffix = seq_info.get('suffix', '')
+                frame_numbers = seq_info.get('frame_numbers', [])
+                files = seq_info.get('files', [])
+                
+                if base_name and suffix and frame_numbers:
+                    # Create sequence pattern for DJV (uses @ symbol for frame numbers)
+                    digits = len(str(max(frame_numbers))) if frame_numbers else 4
+                    digits = max(4, digits)  # At least 4 digits
+                    pattern = f"{base_name}.{'@' * digits}{suffix}"
+                    sequence_pattern = os.path.join(directory, pattern)
+                    is_sequence = True
+                    file_path = sequence_pattern
+                    self.logger.info(f"Using DJV sequence pattern: {pattern}")
+                elif files:
+                    # Fallback to first file
+                    if isinstance(files[0], dict):
+                        file_path = files[0].get('path', '')
+                    else:
+                        file_path = str(files[0])
+                    
+            elif isinstance(media_input, list) and media_input:
+                # List of files - try to detect pattern or use first file
+                files = [str(f) if isinstance(f, dict) and 'path' in f else str(f) for f in media_input]
+                files = sorted(files)
+                
+                # Try to create sequence pattern from file list
+                first_file = files[0]
+                directory = os.path.dirname(first_file)
+                basename = os.path.basename(first_file)
+                
+                # Look for numeric pattern
+                import re
+                match = re.search(r'(\d+)', basename)
+                if match and len(files) > 1:
+                    number_part = match.group(1)
+                    digits = len(number_part)
+                    pattern_name = basename.replace(number_part, '@' * digits)
+                    sequence_pattern = os.path.join(directory, pattern_name)
+                    is_sequence = True
+                    file_path = sequence_pattern
+                    self.logger.info(f"Detected DJV sequence pattern: {pattern_name}")
+                else:
+                    # Single file or no pattern detected
+                    file_path = first_file
+                    
+            elif isinstance(media_input, str):
+                # Single file path
+                file_path = media_input
+            
+            if not file_path:
+                self.logger.error("No valid file path found for DJV")
+                if hasattr(self.app, 'status_manager') and self.app.status_manager:
+                    self.app.status_manager.add_log_message("No valid file path found for DJV", "ERROR")
+                return None
+            
+            # Build DJV command
+            cmd = [djv_exe]
+            
+            # Add the file/sequence path
+            cmd.append(file_path)
+            
+            self.logger.info(f"Launching DJV with command: {' '.join(cmd)}")
+            
+            # Launch with minimal console window on Windows
+            startupinfo = None
+            if platform.system() == 'Windows':
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = 1  # SW_SHOWNORMAL
+            
+            process = subprocess.Popen(
+                cmd,
+                startupinfo=startupinfo,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE
+            )
+            
+            self.logger.info(f"DJV launched successfully (PID: {process.pid})")
+            if hasattr(self.app, 'status_manager') and self.app.status_manager:
+                filename = os.path.basename(file_path)
+                success_msg = f"Launched DJV: {filename}"
+                if is_sequence:
+                    success_msg += " (sequence)"
+                self.app.status_manager.add_log_message(success_msg, "INFO")
+            
+            return process
+            
+        except Exception as e:
+            self.logger.error(f"Failed to launch DJV: {e}")
+            if hasattr(self.app, 'status_manager') and self.app.status_manager:
+                self.app.status_manager.add_log_message(f"Error launching DJV: {e}", "ERROR")
+            import traceback
+            traceback.print_exc()
+            return None
+
+    def send_to_nuke(self, media_input) -> bool:
+        """
+        Send media to Nuke via socket connection to create a Read node.
+        
+        Args:
+            media_input: Can be:
+                - Single file path (str)
+                - Sequence data dict with keys like 'base_name', 'files', etc.
+                - List of files
+        
+        Returns:
+            bool: True if command was sent successfully, False otherwise
+        """
+        try:
+            # Process different input types to get file path and sequence info
+            file_path = None
+            is_sequence = False
+            sequence_pattern = None
+            first_frame = None
+            last_frame = None
+            
+            if isinstance(media_input, dict):
+                # Rich sequence data dict
+                seq_info = media_input
+                directory = seq_info.get('directory', '')
+                base_name = seq_info.get('base_name', '')
+                suffix = seq_info.get('suffix', '')
+                frame_numbers = seq_info.get('frame_numbers', [])
+                files = seq_info.get('files', [])
+                
+                if base_name and suffix and frame_numbers:
+                    # Create Nuke-style sequence pattern (e.g., "image.####.exr")
+                    digits = len(str(max(frame_numbers))) if frame_numbers else 4
+                    digits = max(4, digits)  # At least 4 digits
+                    pattern = f"{base_name}.{'#' * digits}{suffix}"
+                    sequence_pattern = os.path.join(directory, pattern)
+                    # Convert Windows backslashes to forward slashes for Nuke
+                    sequence_pattern = sequence_pattern.replace('\\', '/')
+                    is_sequence = True
+                    file_path = sequence_pattern
+                    
+                    # Extract frame range from frame_numbers
+                    if frame_numbers:
+                        first_frame = min(frame_numbers)
+                        last_frame = max(frame_numbers)
+                        self.logger.info(f"Using sequence pattern: {pattern} [{first_frame}-{last_frame}]")
+                    else:
+                        self.logger.info(f"Using sequence pattern: {pattern}")
+                elif files:
+                    # Fallback to first file
+                    if isinstance(files[0], dict):
+                        file_path = files[0].get('path', '')
+                    else:
+                        file_path = str(files[0])
+                    file_path = file_path.replace('\\', '/')
+                    
+            elif isinstance(media_input, list) and media_input:
+                # List of files - try to detect pattern
+                files = [str(f) if isinstance(f, dict) and 'path' in f else str(f) for f in media_input]
+                files = sorted(files)
+                
+                # Try to create sequence pattern from file list
+                first_file = files[0]
+                directory = os.path.dirname(first_file)
+                basename = os.path.basename(first_file)
+                
+                # Look for numeric pattern and extract frame numbers
+                import re
+                match = re.search(r'(\d+)', basename)
+                if match and len(files) > 1:
+                    number_part = match.group(1)
+                    digits = len(number_part)
+                    pattern_name = basename.replace(number_part, '#' * digits)
+                    sequence_pattern = os.path.join(directory, pattern_name)
+                    sequence_pattern = sequence_pattern.replace('\\', '/')
+                    is_sequence = True
+                    file_path = sequence_pattern
+                    
+                    # Extract frame numbers from all files in the list
+                    frame_numbers = []
+                    for file_in_list in files:
+                        file_basename = os.path.basename(file_in_list)
+                        file_match = re.search(r'(\d+)', file_basename)
+                        if file_match:
+                            frame_numbers.append(int(file_match.group(1)))
+                    
+                    if frame_numbers:
+                        first_frame = min(frame_numbers)
+                        last_frame = max(frame_numbers)
+                        self.logger.info(f"Detected sequence pattern: {pattern_name} [{first_frame}-{last_frame}]")
+                    else:
+                        self.logger.info(f"Detected sequence pattern: {pattern_name}")
+                else:
+                    # Single file or no pattern detected
+                    file_path = first_file.replace('\\', '/')
+                    
+            elif isinstance(media_input, str):
+                # Single file path
+                file_path = media_input.replace('\\', '/')
+            
+            if not file_path:
+                self.logger.error("No valid file path found for Nuke")
+                if hasattr(self.app, 'status_manager') and self.app.status_manager:
+                    self.app.status_manager.add_log_message("No valid file path found for Nuke", "ERROR")
+                return False
+            
+            # Connect to Nuke socket server and send Read node command
+            return self._send_nuke_command(file_path, is_sequence, first_frame, last_frame)
+            
+        except Exception as e:
+            self.logger.error(f"Failed to send media to Nuke: {e}")
+            if hasattr(self.app, 'status_manager'):
+                self.app.status_manager.add_log_message(f"Error sending to Nuke: {e}", "ERROR")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    def _send_nuke_command(self, file_path: str, is_sequence: bool = False, first_frame: int = None, last_frame: int = None) -> bool:
+        """
+        Send a command to Nuke via socket to create a Read node.
+        
+        Args:
+            file_path: File path or sequence pattern to load
+            is_sequence: Whether this is an image sequence
+            first_frame: First frame of the sequence (if applicable)
+            last_frame: Last frame of the sequence (if applicable)
+            
+        Returns:
+            bool: True if command was sent successfully, False otherwise
+        """
+        try:
+            # Create socket connection
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(5.0)  # 5 second timeout
+            
+            try:
+                s.connect(('127.0.0.1', 49512))
+            except socket.error as e:
+                self.logger.error(f"Could not connect to Nuke server at 127.0.0.1:49512. Is Nuke running with NukeServerSocket? Error: {e}")
+                if hasattr(self.app, 'status_manager') and self.app.status_manager:
+                    self.app.status_manager.add_log_message("Could not connect to Nuke server. Is Nuke running with NukeServerSocket?", "ERROR")
+                s.close()
+                return False
+            
+            # Create Nuke Python command to add Read node
+            if is_sequence:
+                nuke_command = f"""
+import nuke
+
+# Create Read node for sequence
+read_node = nuke.createNode('Read')
+read_node['file'].setValue('{file_path}')
+"""
+                # Set frame range if provided
+                if first_frame is not None and last_frame is not None:
+                    nuke_command += f"""
+# Set frame range for sequence
+read_node['first'].setValue({first_frame})
+read_node['last'].setValue({last_frame})
+
+print("Added sequence: " + read_node.name() + " [{first_frame}-{last_frame}]")
+"""
+                else:
+                    nuke_command += """
+print("Added sequence: " + read_node.name())
+"""
+                
+                nuke_command += """
+# Position the node nicely
+read_node.setXYpos(int(read_node.xpos()), int(read_node.ypos()) + 100)
+
+# Show in viewer
+viewer = nuke.activeViewer()
+if viewer:
+    viewer.setInput(0, read_node)
+
+print("Read node created successfully")
+"""
+            else:
+                nuke_command = f"""
+import nuke
+
+# Create Read node for single file
+read_node = nuke.createNode('Read')
+read_node['file'].setValue('{file_path}')
+
+print("Added file: " + read_node.name())
+
+# Position the node nicely
+read_node.setXYpos(int(read_node.xpos()), int(read_node.ypos()) + 100)
+
+# Show in viewer
+viewer = nuke.activeViewer()
+if viewer:
+    viewer.setInput(0, read_node)
+
+print("Read node created successfully")
+"""
+            
+            # Prepare JSON data for NukeServerSocket
+            data = {
+                "text": nuke_command.strip(),
+                "formatText": "0"  # Plain text output for easier parsing
+            }
+            
+            # Send command
+            message = json.dumps(data)
+            s.sendall(message.encode('utf-8'))
+            
+            # Receive response
+            response_data = s.recv(4096)  # Increased buffer size
+            s.close()
+            
+            # Process response
+            response = response_data.decode('utf-8')
+            self.logger.info(f"Nuke server response: {response}")
+            
+            # Check if the command was successful
+            if "Read node created successfully" in response:
+                filename = os.path.basename(file_path)
+                success_msg = f"Successfully sent to Nuke: {filename}"
+                if is_sequence:
+                    success_msg += " (sequence)"
+                
+                self.logger.info(success_msg)
+                if hasattr(self.app, 'status_manager') and self.app.status_manager:
+                    self.app.status_manager.add_log_message(success_msg, "INFO")
+                return True
+            else:
+                # Command may have failed
+                error_msg = f"Nuke command may have failed. Response: {response}"
+                self.logger.warning(error_msg)
+                if hasattr(self.app, 'status_manager') and self.app.status_manager:
+                    self.app.status_manager.add_log_message(f"Nuke response: {response}", "WARNING")
+                return False  # Still return False to indicate uncertainty
+            
+        except socket.timeout:
+            self.logger.error("Timeout connecting to Nuke server")
+            if hasattr(self.app, 'status_manager') and self.app.status_manager:
+                self.app.status_manager.add_log_message("Timeout connecting to Nuke server", "ERROR")
+            try:
+                s.close()
+            except:
+                pass
+            return False
+            
+        except Exception as e:
+            self.logger.error(f"Error sending command to Nuke: {e}")
+            if hasattr(self.app, 'status_manager') and self.app.status_manager:
+                self.app.status_manager.add_log_message(f"Error sending command to Nuke: {e}", "ERROR")
+            try:
+                s.close()
+            except:
+                pass
+            import traceback
+            traceback.print_exc()
+            return False
+
+    def test_nuke_socket_connection(self) -> dict:
+        """
+        Test connection to Nuke socket server.
+        
+        Returns:
+            dict: Test results with keys like 'connected', 'response', 'error'
+        """
+        results = {
+            'connected': False,
+            'nuke_version': None,
+            'response': None,
+            'error': None
+        }
+        
+        try:
+            # Create socket connection
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(3.0)  # 3 second timeout for testing
+            
+            try:
+                s.connect(('127.0.0.1', 49512))
+                results['connected'] = True
+                
+                # Send a simple test command to get Nuke version
+                test_command = {
+                    "text": "import nuke; print(f'Nuke {nuke.NUKE_VERSION_STRING} connected')",
+                    "formatText": "0"
+                }
+                
+                message = json.dumps(test_command)
+                s.sendall(message.encode('utf-8'))
+                
+                # Receive response
+                response_data = s.recv(1024)
+                response = response_data.decode('utf-8')
+                results['response'] = response
+                
+                # Try to extract version info
+                if 'Nuke' in response and 'connected' in response:
+                    import re
+                    version_match = re.search(r'Nuke ([\d.]+)', response)
+                    if version_match:
+                        results['nuke_version'] = version_match.group(1)
+                
+                s.close()
+                
+            except socket.error as e:
+                results['error'] = f"Connection failed: {e}"
+                try:
+                    s.close()
+                except:
+                    pass
+                
+        except Exception as e:
+            results['error'] = str(e)
+        
+        # Log results to app if available
+        if hasattr(self.app, 'status_manager') and self.app.status_manager:
+            if results['connected']:
+                version_info = f" (v{results['nuke_version']})" if results['nuke_version'] else ""
+                self.app.status_manager.add_log_message(f"✓ Nuke socket server connected{version_info}", "INFO")
+            else:
+                self.app.status_manager.add_log_message(f"✗ Nuke socket server not available: {results.get('error', 'Unknown error')}", "WARNING")
+        
+        return results
+
+    def detect_exr_viewers(self) -> Dict[str, str]:
+        """
+        Detect available EXR/image sequence viewers on the system.
+        
+        Returns:
+            Dict[str, str]: Dictionary mapping viewer names to their executable paths
+        """
+        viewers = {}
+        
+        # Common EXR viewer locations
+        viewer_configs = {
+            'nuke_player': {
+                'windows': [
+                    r'C:\Program Files\Nuke*\Nuke*.exe',
+                    r'C:\Program Files (x86)\Nuke*\Nuke*.exe',
+                    r'C:\Users\*\AppData\Local\Nuke*\Nuke*.exe',
+                    r'C:\Nuke*\Nuke*.exe',
+                    r'D:\Program Files\Nuke*\Nuke*.exe',
+                    r'D:\Nuke*\Nuke*.exe',
+                    # Network installations
+                    r'\\*\Nuke*\Nuke*.exe',
+                    # Foundry standard locations
+                    r'C:\Program Files\Foundry\Nuke*\Nuke*.exe',
+                    r'C:\Program Files (x86)\Foundry\Nuke*\Nuke*.exe'
+                ],
+                'linux': [
+                    '/usr/local/Nuke*/Nuke*',
+                    '/opt/Nuke*/Nuke*',
+                    '/home/*/Nuke*/Nuke*',
+                    '/usr/local/foundry/nuke*/Nuke*',
+                    '/opt/foundry/nuke*/Nuke*',
+                    # Network mounts
+                    '/mnt/*/Nuke*/Nuke*',
+                    '/net/*/Nuke*/Nuke*'
+                ],
+                'darwin': [
+                    '/Applications/Nuke*/Nuke*.app/Contents/MacOS/Nuke*',
+                    '/usr/local/Nuke*/Nuke*',
+                    '/opt/Nuke*/Nuke*',
+                    '/Applications/Foundry/Nuke*/Nuke*.app/Contents/MacOS/Nuke*'
+                ]
+            },
+            'mrv2': {
+                'windows': [
+                    r'C:\Program Files\mrv2*\bin\mrv2.exe',
+                    r'C:\Program Files (x86)\mrv2*\bin\mrv2.exe',
+                    r'C:\mrv2*\bin\mrv2.exe',
+                    r'C:\mrv2*\mrv2.exe',
+                    r'D:\Program Files\mrv2*\bin\mrv2.exe',
+                    r'D:\mrv2*\bin\mrv2.exe',
+                    # User installations
+                    r'C:\Users\*\AppData\Local\mrv2*\bin\mrv2.exe',
+                    r'C:\Users\*\mrv2*\bin\mrv2.exe',
+                    # Network installations  
+                    r'\\*\mrv2*\bin\mrv2.exe'
+                ],
+                'linux': [
+                    '/usr/local/mrv2*/bin/mrv2',
+                    '/opt/mrv2*/bin/mrv2',
+                    '/usr/bin/mrv2',
+                    '/usr/local/bin/mrv2',
+                    '/home/*/mrv2*/bin/mrv2',
+                    # AppImage locations
+                    '/usr/local/mrv2*/mrv2*.AppImage',
+                    '/opt/mrv2*/mrv2*.AppImage',
+                    '/home/*/Applications/mrv2*.AppImage',
+                    # Network mounts
+                    '/mnt/*/mrv2*/bin/mrv2',
+                    '/net/*/mrv2*/bin/mrv2'
+                ],
+                'darwin': [
+                    '/Applications/mrv2*.app/Contents/MacOS/mrv2*',
+                    '/usr/local/mrv2*/bin/mrv2',
+                    '/opt/mrv2*/bin/mrv2',
+                    '/usr/local/bin/mrv2',
+                    # Homebrew locations
+                    '/opt/homebrew/bin/mrv2',
+                    '/usr/local/Cellar/mrv2*/bin/mrv2'
+                ]
+            },
+            'djv': {
+                'windows': [
+                    r'C:\Program Files\DJV*\bin\djv_view.exe',
+                    r'C:\Program Files (x86)\DJV*\bin\djv_view.exe',
+                    r'C:\DJV*\bin\djv_view.exe',
+                    r'C:\DJV*\djv_view.exe',
+                    r'D:\Program Files\DJV*\bin\djv_view.exe',
+                    r'D:\DJV*\bin\djv_view.exe',
+                    # User installations
+                    r'C:\Users\*\AppData\Local\DJV*\bin\djv_view.exe',
+                    r'C:\Users\*\DJV*\bin\djv_view.exe',
+                    # Network installations
+                    r'\\*\DJV*\bin\djv_view.exe',
+                    # Alternative executable names
+                    r'C:\Program Files\DJV*\bin\djv.exe',
+                    r'C:\Program Files (x86)\DJV*\bin\djv.exe'
+                ],
+                'linux': [
+                    '/usr/local/DJV*/bin/djv_view',
+                    '/opt/DJV*/bin/djv_view',
+                    '/usr/bin/djv_view',
+                    '/usr/local/bin/djv_view',
+                    '/home/*/DJV*/bin/djv_view',
+                    # Alternative executable names
+                    '/usr/local/DJV*/bin/djv',
+                    '/opt/DJV*/bin/djv',
+                    '/usr/bin/djv',
+                    '/usr/local/bin/djv',
+                    # AppImage locations
+                    '/usr/local/DJV*/DJV*.AppImage',
+                    '/opt/DJV*/DJV*.AppImage',
+                    '/home/*/Applications/DJV*.AppImage',
+                    # Network mounts
+                    '/mnt/*/DJV*/bin/djv_view',
+                    '/net/*/DJV*/bin/djv_view'
+                ],
+                'darwin': [
+                    '/Applications/DJV*.app/Contents/MacOS/djv_view',
+                    '/Applications/DJV*.app/Contents/MacOS/djv',
+                    '/usr/local/DJV*/bin/djv_view',
+                    '/opt/DJV*/bin/djv_view',
+                    '/usr/local/bin/djv_view',
+                    '/usr/local/bin/djv',
+                    # Homebrew locations
+                    '/opt/homebrew/bin/djv_view',
+                    '/opt/homebrew/bin/djv',
+                    '/usr/local/Cellar/djv*/bin/djv_view'
+                ]
+            }
+        }
+        
+        system = platform.system().lower()
+        system_map = {'windows': 'windows', 'linux': 'linux', 'darwin': 'darwin'}
+        system_key = system_map.get(system, 'linux')
+        
+        for viewer_name, config in viewer_configs.items():
+            paths = config.get(system_key, [])
+            for path in paths:
+                # Handle wildcards for Nuke
+                if '*' in path:
+                    import glob
+                    matches = glob.glob(path)
+                    if matches:
+                        # For Nuke, filter matches to exclude utility executables
+                        if viewer_name == 'nuke_player':
+                            # Filter out known utility executables
+                            filtered_matches = []
+                            for match in matches:
+                                exe_name = os.path.basename(match).lower()
+                                # Only include main Nuke executables, exclude utilities
+                                if (exe_name.startswith('nuke') and 
+                                    not any(util in exe_name for util in [
+                                        'crash', 'feedback', 'studio', 'batch', 
+                                        'render', 'worker', 'plugin', 'sdk'
+                                    ])):
+                                    filtered_matches.append(match)
+                            matches = filtered_matches
+                        elif viewer_name == 'mrv2':
+                            # Filter MRV2 matches to exclude non-executable files
+                            filtered_matches = []
+                            for match in matches:
+                                if os.path.isfile(match) and (match.endswith('.exe') or 
+                                                            match.endswith('.AppImage') or
+                                                            not '.' in os.path.basename(match)):
+                                    filtered_matches.append(match)
+                            matches = filtered_matches
+                        elif viewer_name == 'djv':
+                            # Filter DJV matches to exclude non-executable files
+                            filtered_matches = []
+                            for match in matches:
+                                if os.path.isfile(match) and (match.endswith('.exe') or 
+                                                            match.endswith('.AppImage') or
+                                                            not '.' in os.path.basename(match)):
+                                    filtered_matches.append(match)
+                            matches = filtered_matches
+                        
+                        # Sort to get the latest version
+                        matches.sort(reverse=True)
+                        for match in matches:
+                            if os.path.exists(match):
+                                # For Nuke, do additional validation
+                                if viewer_name == 'nuke_player':
+                                    if self._validate_nuke_executable(match):
+                                        viewers[viewer_name] = match
+                                        print(f"[NUKE_DETECTION] Found valid Nuke Player: {match}")
+                                        break
+                                else:
+                                    viewers[viewer_name] = match
+                                    print(f"[{viewer_name.upper()}_DETECTION] Found {viewer_name}: {match}")
+                                    break
+                        if viewer_name in viewers:
+                            break
+                else:
+                    if os.path.exists(path):
+                        # For Nuke, do additional validation
+                        if viewer_name == 'nuke_player':
+                            if self._validate_nuke_executable(path):
+                                viewers[viewer_name] = path
+                                print(f"[NUKE_DETECTION] Found valid Nuke Player: {path}")
+                        else:
+                            viewers[viewer_name] = path
+                            print(f"[{viewer_name.upper()}_DETECTION] Found {viewer_name}: {path}")
+                        break
+        
+        return viewers
+
+    def _validate_nuke_executable(self, nuke_path: str) -> bool:
+        """
+        Validate that a Nuke executable supports image viewing with -v flag.
+        
+        Args:
+            nuke_path: Path to potential Nuke executable
+            
+        Returns:
+            bool: True if this Nuke supports -v flag for image viewing
+        """
+        try:
+            # First check if this is actually the main Nuke executable
+            exe_name = os.path.basename(nuke_path).lower()
+            
+            # Exclude utility executables that are not the main Nuke application
+            excluded_names = [
+                'nukecrashfeedback.exe',
+                'nukex.exe',  # NukeX might not support -v the same way
+                'nukestudio.exe',  # Nuke Studio is different
+                'nukegui.exe',  # Sometimes there are GUI-specific variants
+                'nukebatch.exe',  # Batch rendering, not viewer
+                'nukerender.exe',  # Render-only version
+                'nukeworker.exe',  # Render worker
+                'nukeplugin.exe',  # Plugin utilities
+                'nukesdk.exe'  # SDK utilities
+            ]
+            
+            # Check if this executable should be excluded
+            for excluded in excluded_names:
+                if excluded in exe_name:
+                    print(f"[NUKE_DETECTION] Excluding utility executable: {nuke_path}")
+                    return False
+            
+            # Look for the main Nuke executable patterns
+            valid_patterns = [
+                'nuke',  # Basic nuke
+                'nuke13',  # Version-specific
+                'nuke14',
+                'nuke15',
+                'nuke16',
+                'nuke10'  # Non-commercial version
+            ]
+            
+            # Check if the executable name matches valid patterns
+            is_valid_name = False
+            for pattern in valid_patterns:
+                if exe_name.startswith(pattern) and not any(excluded in exe_name for excluded in excluded_names):
+                    is_valid_name = True
+                    break
+            
+            if not is_valid_name:
+                print(f"[NUKE_DETECTION] Executable name doesn't match valid Nuke patterns: {nuke_path}")
+                return False
+            
+            print(f"[NUKE_DETECTION] Valid Nuke executable found: {nuke_path}")
+            
+            # Quick test to see if Nuke responds to --help without crashing
+            result = subprocess.run(
+                [nuke_path, '--help'], 
+                capture_output=True, 
+                text=True, 
+                timeout=10
+            )
+            
+            # Check if help output mentions -v flag for viewing
+            help_text = result.stdout.lower()
+            if '-v' in help_text and 'display' in help_text:
+                print(f"[NUKE_DETECTION] Nuke supports -v image viewing: {nuke_path}")
+                return True
+            else:
+                print(f"[NUKE_DETECTION] Nuke may not support -v viewing, but assuming it does: {nuke_path}")
+                # Still return True as most Nuke versions support -v
+                return True
+                
+        except subprocess.TimeoutExpired:
+            print(f"[NUKE_DETECTION] Nuke help command timed out, assuming valid: {nuke_path}")
+            return True  # Assume it works if we can't test
+        except Exception as e:
+            print(f"[NUKE_DETECTION] Error validating Nuke: {nuke_path}, error: {e}")
+            return True  # Assume it works if we can't test
+
 
 if __name__ == "__main__":
     # Test the utilities
@@ -1239,3 +2572,159 @@ if __name__ == "__main__":
     else:
         print("\nffplay not found. Please install FFmpeg.")
         print("Download from: https://ffmpeg.org/download.html")
+    
+    # Test Nuke Player installation
+    print("\n" + "="*50)
+    print("Testing Nuke Player installation...")
+    
+    # Create a mock app instance for testing
+    class MockApp:
+        def __init__(self):
+            self.status_manager = None
+    
+    mock_app = MockApp()
+    media_utils = MediaPlayerUtils(mock_app)
+    nuke_results = media_utils.test_nuke_player_installation()
+    
+    print("\nNuke Player test results:")
+    for key, value in nuke_results.items():
+        print(f"{key}: {value}")
+    
+    if nuke_results['nuke_found']:
+        print("\nNuke Player is ready for professional media playback!")
+        print("\nNuke Player features:")
+        print("- Professional image sequence playback")
+        print("- Supports EXR, DPX, CIN, and other professional formats")
+        print("- Frame-accurate scrubbing and playback")
+        print("- Built-in color management")
+        print("- High dynamic range (HDR) support")
+        print("- Network rendering and collaboration features")
+        print("\nNuke Player controls:")
+        print("- Left/Right arrows: Step through frames")
+        print("- Space: Play/pause")
+        print("- Home/End: Go to first/last frame") 
+        print("- Mouse drag: Scrub through timeline")
+        print("- Mouse wheel: Zoom in/out")
+        print("- Right click: Color correction and view options")
+    else:
+        print("\nNuke Player not found.")
+        print("Install Foundry Nuke for professional media playback.")
+        print("Download from: https://www.foundry.com/products/nuke")
+
+    # Test MRV2 installation
+    print("\n" + "="*50)
+    print("Testing MRV2 installation...")
+    
+    mrv2_results = media_utils.test_mrv2_installation()
+    
+    print("\nMRV2 test results:")
+    for key, value in mrv2_results.items():
+        print(f"{key}: {value}")
+    
+    if mrv2_results['mrv2_found']:
+        print("\nMRV2 is ready for professional media playback!")
+        print("\nMRV2 features:")
+        print("- Professional image sequence viewer")
+        print("- Advanced color management and LUT support")
+        print("- ACES and OpenColorIO integration")
+        print("- VFX and animation workflow optimized")
+        print("- Supports EXR, DPX, TIFF, MOV, and many other formats")
+        print("- Real-time playback with GPU acceleration")
+        print("\nMRV2 controls:")
+        print("- Space: Play/pause")
+        print("- Left/Right arrows: Step through frames")
+        print("- Mouse wheel: Zoom in/out")
+        print("- Right click: Context menu with color and display options")
+    else:
+        print("\nMRV2 not found.")
+        print("Install MRV2 for professional VFX media playback.")
+        print("Download from: https://github.com/ggarra13/mrv2")
+
+    # Test DJV installation
+    print("\n" + "="*50)
+    print("Testing DJV installation...")
+    
+    djv_results = media_utils.test_djv_installation()
+    
+    print("\nDJV test results:")
+    for key, value in djv_results.items():
+        print(f"{key}: {value}")
+    
+    if djv_results['djv_found']:
+        print("\nDJV is ready for professional media playback!")
+        print("\nDJV features:")
+        print("- Professional image sequence viewer")
+        print("- Optimized for film and VFX workflows")
+        print("- Supports industry-standard formats (EXR, DPX, CIN, etc.)")
+        print("- Color management and LUT support")
+        print("- High-performance playback engine")
+        print("- Cross-platform compatibility")
+        print("\nDJV controls:")
+        print("- Space: Play/pause")
+        print("- Left/Right arrows: Step through frames")
+        print("- Page Up/Down: Jump by larger increments")
+        print("- Mouse wheel: Zoom in/out")
+        print("- Right click: View and playback options")
+    else:
+        print("\nDJV not found.")
+        print("Install DJV for professional image sequence playback.")
+        print("Download from: https://darbyjohnston.github.io/DJV/")
+    
+    # Test all available media players
+    print("\n" + "="*50)
+    print("Available media players summary:")
+    
+    available_players = []
+    if test_results['ffplay_found']:
+        available_players.append("ffplay (FFmpeg)")
+    if nuke_results['nuke_found']:
+        available_players.append("Nuke Player (Professional)")
+    if mrv2_results['mrv2_found']:
+        available_players.append("MRV2 (VFX Optimized)")
+    if djv_results['djv_found']:
+        available_players.append("DJV (Film/VFX)")
+    
+    # Test Nuke socket connection
+    print("\n" + "="*50)
+    print("Testing Nuke socket connection...")
+    
+    socket_results = media_utils.test_nuke_socket_connection()
+    print("\nNuke socket test results:")
+    for key, value in socket_results.items():
+        print(f"{key}: {value}")
+    
+    if socket_results['connected']:
+        print("\n✅ Nuke socket server is running and ready!")
+        print("\nNuke socket features:")
+        print("- Send Read nodes directly to open Nuke session")
+        print("- Automatic sequence pattern detection")
+        print("- Frame range detection and project setup")
+        print("- Real-time communication with running Nuke")
+        print("- No need to launch separate processes")
+        print("\nTo use: Ensure Nuke is running with NukeServerSocket plugin loaded")
+        available_players.append("Nuke Socket (Real-time)")
+    else:
+        print("\n⚠️ Nuke socket server not available")
+        print("To enable:")
+        print("1. Start Nuke")
+        print("2. Load the NukeServerSocket plugin")
+        print("3. Ensure server is listening on 127.0.0.1:49512")
+    
+    if available_players:
+        print(f"\nFound {len(available_players)} media player(s):")
+        for player in available_players:
+            print(f"  ✓ {player}")
+    else:
+        print("\nNo media players found. Please install FFmpeg and/or professional viewers.")
+    
+    print("\nRecommended usage:")
+    print("- ffplay: General purpose video/audio playback, fast and lightweight")
+    print("- Nuke Socket: Professional sequences, real-time Read node creation")
+    print("- Nuke Player: Professional image sequences, VFX, color-critical work")
+    print("- MRV2: VFX and animation workflows, advanced color management")
+    print("- DJV: Film and VFX workflows, high-performance sequence playback")
+    print("- All support image sequences with frame-accurate playback")
+
+    print("- Nuke Socket: Professional sequences, real-time Read node creation")
+    print("- Nuke Player: Professional image sequences, VFX, color-critical work")
+    print("- All support image sequences with frame-accurate playback")

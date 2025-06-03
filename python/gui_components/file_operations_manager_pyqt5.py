@@ -36,7 +36,15 @@ class FileOperationsManager:
         if not selected_items:
             QMessageBox.warning(self.app, "No Selection", "Please select items to copy.")
             return
-            
+        # Always use folders from the main panel UI
+        source_folder = self.app.selected_source_folder.get().strip()
+        destination_folder = self.app.selected_destination_folder.get().strip()
+        if not source_folder:
+            QMessageBox.critical(self.app, "Missing Source Folder", "Please select a source folder in the main panel before copying.")
+            return
+        if not destination_folder:
+            QMessageBox.critical(self.app, "Missing Destination Folder", "Please select a destination folder in the main panel before copying.")
+            return
         self.start_file_operation(selected_items, operation_type="copy")
 
     def on_move_selected_click(self):
@@ -46,7 +54,15 @@ class FileOperationsManager:
         if not selected_items:
             QMessageBox.warning(self.app, "No Selection", "Please select items to move.")
             return
-            
+        # Always use folders from the main panel UI
+        source_folder = self.app.selected_source_folder.get().strip()
+        destination_folder = self.app.selected_destination_folder.get().strip()
+        if not source_folder:
+            QMessageBox.critical(self.app, "Missing Source Folder", "Please select a source folder in the main panel before moving.")
+            return
+        if not destination_folder:
+            QMessageBox.critical(self.app, "Missing Destination Folder", "Please select a destination folder in the main panel before moving.")
+            return
         # Confirm move operation
         reply = QMessageBox.question(
             self.app, 
@@ -195,6 +211,15 @@ class FileOperationsManager:
         except Exception as e:
             self.app.status_manager.set_status(f"{operation_type.title()} operation failed: {str(e)}")
         finally:
+            # Persist last used source/destination folders after operation
+            try:
+                current_settings = self.app.settings_manager.load_settings()
+                ui_state = current_settings.setdefault("ui_state", {})
+                ui_state["source_folder"] = self.app.selected_source_folder.get()
+                ui_state["destination_folder"] = self.app.selected_destination_folder.get()
+                self.app.settings_manager.save_settings(current_settings)
+            except Exception as persist_exc:
+                print(f"[WARNING] Could not persist last used folders: {persist_exc}")
             # Re-enable action buttons
             if hasattr(self.app, 'copy_selected_btn'):
                 self.app.copy_selected_btn.setEnabled(True)

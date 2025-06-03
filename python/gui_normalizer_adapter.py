@@ -469,62 +469,97 @@ class GuiNormalizerAdapter:
         }
 
     def get_available_tasks_for_profile(self, profile_name: str) -> List[str]:
-        """
-        Retrieves a list of available task names based on the loaded patterns.json,
-        which is implicitly part of a profile's context.
-
-        Args:
-            profile_name: The name of the current profile (may be used in future
-                          if tasks become profile-specific).
-
-        Returns:
-            A list of task name strings, sorted alphabetically.
-        """
-        # Currently, task patterns are global in patterns.json
-        # If tasks were to become profile-specific, this logic would need to access
-        # the specific profile_config_entry for profile_name.
         try:
             with open(self.patterns_json_path, 'r', encoding='utf-8') as f:
                 patterns_data = json.load(f)
-            
             task_patterns = patterns_data.get('taskPatterns', {})
-            # Task patterns are expected to be like: {"task_name_for_display": ["keyword1", "keyword2"]}
-            # We want to return the keys (task_name_for_display)
-            return sorted(list(task_patterns.keys()))
+            if isinstance(task_patterns, dict):
+                # Task patterns are expected to be like: {"task_name_for_display": ["keyword1", "keyword2"]}
+                # We want to return the keys (task_name_for_display)
+                return sorted(list(task_patterns.keys()))
+            elif isinstance(task_patterns, list):
+                # If list of strings or list of dicts with 'name' or 'pattern', extract those
+                if task_patterns and isinstance(task_patterns[0], dict):
+                    self.logger.debug("Task patterns are a list of dicts, extracting 'name' or 'pattern' values.")
+                    names = []
+                    for d in task_patterns:
+                        if isinstance(d, dict):
+                            if 'name' in d:
+                                names.append(d['name'])
+                            elif 'pattern' in d:
+                                names.append(d['pattern'])
+                    return sorted(names)
+                else:
+                    # List of strings
+                    self.logger.debug("Task patterns are a list of strings.")
+                    return sorted([str(x) for x in task_patterns])
+            else:
+                self.logger.warning("Task patterns are neither a dict nor a list, returning empty list.")
+                return []
         except Exception as e:
             self.logger.error(f"Error loading or parsing task patterns from {self.patterns_json_path}: {e}")
             return []
 
     def get_available_assets_for_profile(self, profile_name: str) -> List[str]:
         """
-        Retrieves a list of available asset names. 
-        Currently, this is a placeholder as asset names are typically dynamic or
-        derived from file names, not predefined lists in patterns.json in the same
-        way tasks might be.
-
-        If there was a specific list of known assets in patterns.json or profiles.json,
-        this method would parse it.
-
-        Args:
-            profile_name: The name of the current profile.
-
-        Returns:
-            An empty list or a list of predefined asset names if available, sorted alphabetically.
+        Retrieves a list of available asset names for the given profile.
+        Returns sorted asset names from assetPatterns in patterns.json.
+        Handles both dict and list structures for assetPatterns.
         """
-        # Placeholder: Asset names are usually dynamic. 
-        # If you have a predefined list of asset types or common asset names in your 
-        # patterns.json (e.g., under a key like "knownAssetNames" or "assetTypes"), 
-        # you would load and return them here.
-        # For example, if patterns.json had: "assetTypes": ["character", "prop", "environment"]
-        # try:
-        #     with open(self.patterns_json_path, 'r', encoding='utf-8') as f:
-        #         patterns_data = json.load(f)
-        #     return sorted(patterns_data.get('assetTypes', []))
-        # except Exception as e:
-        #     self.logger.error(f"Error loading or parsing asset types from {self.patterns_json_path}: {e}")
-        #     return []
-        # self.logger.info(  # (Silenced for normal use. Re-enable for troubleshooting.)"get_available_assets_for_profile is a placeholder. Asset names are generally dynamic.")
-        return [] # Return empty list as assets are typically not predefined in the same way as tasks
+        try:
+            with open(self.patterns_json_path, 'r', encoding='utf-8') as f:
+                patterns_data = json.load(f)
+            asset_patterns = patterns_data.get('assetPatterns', {})
+            if isinstance(asset_patterns, dict):
+                # If assetPatterns is a dict, return its keys
+                return sorted(list(asset_patterns.keys()))
+            elif isinstance(asset_patterns, list):
+                # If assetPatterns is a list, return as strings
+                return sorted([str(x) for x in asset_patterns])
+            else:
+                self.logger.warning("Asset patterns are neither a dict nor a list, returning empty list.")
+                return []
+        except Exception as e:
+            self.logger.error(f"Error loading or parsing asset patterns from {self.patterns_json_path}: {e}")
+            return []
+
+    def get_available_resolutions_for_profile(self, profile_name: str) -> List[str]:
+        """
+        Retrieves a list of available resolution names from patterns.json.
+        Robustly handles both dict and list structures for resolutionPatterns.
+        """
+        try:
+            with open(self.patterns_json_path, 'r', encoding='utf-8') as f:
+                patterns_data = json.load(f)
+            res_patterns = patterns_data.get('resolutionPatterns', {})
+            if isinstance(res_patterns, dict):
+                return sorted(list(res_patterns.keys()))
+            elif isinstance(res_patterns, list):
+                return sorted([str(x) for x in res_patterns])
+            else:
+                return []
+        except Exception as e:
+            self.logger.error(f"Error loading or parsing resolution patterns from {self.patterns_json_path}: {e}")
+            return []
+
+    def get_available_stages_for_profile(self, profile_name: str) -> List[str]:
+        """
+        Retrieves a list of available stage names from patterns.json.
+        Robustly handles both dict and list structures for stagePatterns.
+        """
+        try:
+            with open(self.patterns_json_path, 'r', encoding='utf-8') as f:
+                patterns_data = json.load(f)
+            stage_patterns = patterns_data.get('stagePatterns', {})
+            if isinstance(stage_patterns, dict):
+                return sorted(list(stage_patterns.keys()))
+            elif isinstance(stage_patterns, list):
+                return sorted([str(x) for x in stage_patterns])
+            else:
+                return []
+        except Exception as e:
+            self.logger.error(f"Error loading or parsing stage patterns from {self.patterns_json_path}: {e}")
+            return []
 
     def get_path_preview(
         self,
@@ -723,77 +758,4 @@ class GuiNormalizerAdapter:
             return f"Error generating preview: {e}"
 
 
-# Example Usage (for testing purposes, typically not run directly)
-if __name__ == '__main__':
-    # Create dummy config files for testing
-    dummy_config_dir = Path(__file__).parent.parent / "tmp_config_for_adapter_test"
-    dummy_config_dir.mkdir(exist_ok=True)
-    
-    dummy_patterns_file = dummy_config_dir / "patterns.json"
-    with open(dummy_patterns_file, 'w') as f:
-        json.dump({
-            "shotPatterns": [{"pattern": "(sh[0-9]+)", "name": "Shot Pattern"}],
-            "taskPatterns": {"modeling": ["mod", "mdl"]},
-            "resolutionPatterns": [],
-            "versionPatterns": [{"pattern": "(v[0-9]+)", "name": "Version Pattern"}],
-            "assetPatterns": [],
-            "stagePatterns": []
-        }, f)
-
-    dummy_profiles_file = dummy_config_dir / "profiles.json"
-    with open(dummy_profiles_file, 'w') as f:
-        json.dump({
-            "TestProfile": {
-                "name": "TestProfile",
-                "vfx_root": "/projects/test_project",
-                "description": "A test profile",
-                "rules": [
-                    {"3D/Renders": ["rend", "lighting"]}
-                ]
-            }
-        }, f)
-
-    # Create a dummy source directory with a file
-    dummy_source_dir = Path(__file__).parent.parent / "tmp_source_for_adapter_test"
-    dummy_source_dir.mkdir(exist_ok=True)
-    with open(dummy_source_dir / "sh001_mod_v01.txt", 'w') as f:
-        f.write("dummy content")
-
-    dummy_dest_dir = Path(__file__).parent.parent / "tmp_dest_for_adapter_test"
-    dummy_dest_dir.mkdir(exist_ok=True)
-
-    print(f"Dummy config path: {dummy_config_dir.resolve()}")
-    print(f"Dummy source path: {dummy_source_dir.resolve()}")
-    print(f"Dummy dest path: {dummy_dest_dir.resolve()}")
-
-    try:
-        adapter = GuiNormalizerAdapter(config_dir_path=str(dummy_config_dir))
-        print(f"Available profiles: {adapter.get_profile_names()}")
         
-        def my_status_callback(progress_info):
-            print(f"Status Update: {progress_info['type']} - {progress_info['data'].get('status', 'N/A')} - {progress_info['data'].get('progressPercentage', 0):.2f}%")
-
-        results = adapter.scan_and_normalize_structure(
-            base_path=str(dummy_source_dir),
-            profile_name="TestProfile",
-            destination_root=str(dummy_dest_dir),
-            status_callback=my_status_callback
-        )
-        print("\nNormalization Results:")
-        for item in results:
-            print(json.dumps(item, indent=2))
-    except Exception as e:
-        print(f"Error during example usage: {e}")
-        import traceback
-        traceback.print_exc()
-    finally:
-        # Clean up dummy files and directories
-        import shutil
-        # shutil.rmtree(dummy_config_dir, ignore_errors=True)
-        # shutil.rmtree(dummy_source_dir, ignore_errors=True)
-        # shutil.rmtree(dummy_dest_dir, ignore_errors=True)
-        print("\nClean up of temp files/dirs skipped for inspection. Manually delete them if needed:")
-        print(f"- {dummy_config_dir.resolve()}")
-        print(f"- {dummy_source_dir.resolve()}")
-        print(f"- {dummy_dest_dir.resolve()}")
-

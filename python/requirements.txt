@@ -1,7 +1,15 @@
 # Core dependencies for VFX Folder Normalizer
 pathlib2>=2.3.7
 typing-extensions>=4.0.0
-python-vlc>=3.0.20 # Added for embedded media playback
+python-vlc>=3.0.20 # For embedded media playback
+
+# --- GUI dependencies ---
+# For PyQt5 GUI
+PyQt5>=5.15.0
+
+# For legacy/alternate Tkinter GUI
+customtkinter>=5.2.0
+# Standard Tkinter is included with Python, but customtkinter is required for themed widgets
 
 # Testing dependencies
 pytest>=7.0.0

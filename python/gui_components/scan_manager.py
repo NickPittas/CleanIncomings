@@ -34,13 +34,13 @@ class ScanManager:
         destination_root = self.app.selected_destination_folder.get()
 
         if not source_path:
-            self.app.status_label.setText("Please select a source folder.")
+            self.app.status_label.setText("Please select a source folder in the main panel before scanning.")
+            return
+        if not destination_root:
+            self.app.status_label.setText("Please select a destination folder in the main panel before scanning.")
             return
         if not profile_name:
             self.app.status_label.setText("Please select a profile.")
-            return
-        if not destination_root:
-            self.app.status_label.setText("Please select a destination root folder.")
             return
         
         if not self.app.normalizer:

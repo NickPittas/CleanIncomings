@@ -16,7 +16,7 @@
         "copy_threads": 32,
         "ffplay_path": "C:/Users/npitt/AppData/Local/Microsoft/WinGet/Packages/Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe/ffmpeg-7.1.1-full_build/bin/ffplay.exe",
         "scan_on_startup": false,
-        "default_source_folder": "",
+        "default_source_folder": "Z:/196799130_PREVIZ_v022/196799406_PREVIZ_v022/imags/Multipass/4k/beauty",
         "default_destination_folder": "",
         "theme": "Nuke Dark",
         "font_size": 8,
@@ -31,6 +31,6 @@
         "max_concurrent_copies": 16,
         "max_concurrent_operations": 4,
         "batch_copy_threads": 32,
-        "progress_update_interval": 0.20000000000000007
+        "progress_update_interval": 0.2
     }
 }

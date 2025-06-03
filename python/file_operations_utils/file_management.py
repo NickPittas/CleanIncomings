@@ -104,7 +104,6 @@ class FileTransfer:
                     settings_manager = app_instance.settings_manager
                     batch_copy_threads = int(settings_manager.get_setting('performance', 'batch_copy_threads', 32))
                 else:
-                    import os
                     batch_copy_threads = int(os.environ.get('BATCH_COPY_THREADS', 32))
             except Exception:
                 batch_copy_threads = 32
@@ -163,65 +162,12 @@ class FileTransfer:
                     print(f"[FILETRANSFER_ERROR] {self.error_message}")
                     return False
             else:
-                # Try fallback to xcopy for compatibility
-                print(f"[FILETRANSFER_DEBUG] Robocopy failed (code {result.returncode}), trying xcopy fallback...")
-                return self._xcopy_fallback()
-                
-        except Exception as e:
-            print(f"[FILETRANSFER_ERROR] Native copy failed: {e}, trying xcopy fallback...")
-            return self._xcopy_fallback()
-    
-    def _xcopy_fallback(self):
-        """Fallback to xcopy if robocopy fails."""
-        try:
-            print(f"[FILETRANSFER_DEBUG] Using xcopy fallback for compatibility")
-            
-            # Use xcopy with aggressive settings
-            # /Y = Overwrite without prompting
-            # /J = Unbuffered I/O
-            # /H = Copy hidden and system files
-            cmd = ['xcopy', f'"{self.src}"', f'"{self.dst}"', '/Y', '/H']
-            
-            print(f"[FILETRANSFER_DEBUG] Executing xcopy: {' '.join(cmd)}")
-            
-            start_time = time.time()
-            result = subprocess.run(cmd, capture_output=True, text=True, check=False, shell=True)
-            end_time = time.time()
-            
-            elapsed_time = end_time - start_time
-            speed_bps = self.total_size / elapsed_time if elapsed_time > 0.001 else 0
-            speed_mbps = speed_bps / (1024 * 1024)
-            
-            print(f"[FILETRANSFER_DEBUG] Xcopy completed in {elapsed_time:.2f}s")
-            print(f"[FILETRANSFER_DEBUG] Speed: {speed_mbps:.2f} MB/s ({speed_bps * 8 / 1_000_000_000:.2f} Gbps)")
-            print(f"[FILETRANSFER_DEBUG] Return code: {result.returncode}")
-            
-            if result.returncode == 0:
-                # Verify the file was actually copied
-                if os.path.exists(self.dst) and os.path.getsize(self.dst) == self.total_size:
-                    self.transferred_bytes = self.total_size
-                    self.completed_successfully = True
-                    
-                    print(f"[FILETRANSFER_DEBUG] ✅ XCOPY SUCCESS! Speed: {speed_mbps:.2f} MB/s ({speed_bps * 8 / 1_000_000_000:.2f} Gbps)")
-                    
-                    # Send completion status
-                    if self.status_callback_adapter:
-                        self.status_callback_adapter(
-                            self.total_size, self.total_size, speed_bps, 0, "completed", self.transfer_id
-                        )
-                    
-                    return True
-                else:
-                    self.error_message = f"Xcopy reported success but destination file validation failed"
-                    print(f"[FILETRANSFER_ERROR] {self.error_message}")
-                    return False
-            else:
-                # Final fallback to Python shutil for maximum compatibility
-                print(f"[FILETRANSFER_DEBUG] Xcopy failed (code {result.returncode}), using Python shutil as final fallback...")
+                # Try fallback to Python shutil.copy2() for compatibility
+                print(f"[FILETRANSFER_DEBUG] Robocopy failed (code {result.returncode}), using Python shutil.copy2() fallback...")
                 return self._python_fallback()
                 
         except Exception as e:
-            print(f"[FILETRANSFER_ERROR] Xcopy fallback failed: {e}, using Python shutil as final fallback...")
+            print(f"[FILETRANSFER_ERROR] Native copy failed: {e}, using Python shutil.copy2() fallback...")
             return self._python_fallback()
     
     def _python_fallback(self):
@@ -628,7 +574,23 @@ def copy_sequence_batch(source_dir: str, destination_dir: str, file_pattern: str
                        status_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
                        transfer_id: Optional[str] = None,
                        file_count: Optional[int] = None,
-                       total_size: Optional[int] = None) -> Tuple[bool, str]:
+                       total_size: Optional[int] = None,
+                       overwrite_existing: bool = False) -> Tuple[bool, str]:
+    """
+    Copies an entire sequence/batch of files using native Windows commands for maximum speed.
+    Much more efficient than copying files one by one.
+    Args:
+        source_dir: Source directory containing the files
+        destination_dir: Destination directory 
+        file_pattern: Pattern like "OLNT0010_main_arch_rgb_*.png" or "*" for all files
+        status_callback: Optional callback for progress updates
+        transfer_id: Optional transfer ID for tracking
+        file_count: Optional pre-calculated file count (avoids redundant scanning)
+        total_size: Optional total size (calculated during transfer if not provided)
+        overwrite_existing: If True, overwrite existing files in destination; if False, skip them (default).
+    Returns:
+        Tuple of (success: bool, message: str)
+    """
     """
     Copies an entire sequence/batch of files using native Windows commands for maximum speed.
     Much more efficient than copying files one by one.
@@ -645,20 +607,30 @@ def copy_sequence_batch(source_dir: str, destination_dir: str, file_pattern: str
     Returns:
         Tuple of (success: bool, message: str)
     """
-    # Use provided file_count or calculate if needed (but don't calculate total_size unnecessarily)
-    if file_count is None:
-        matching_files = list(Path(source_dir).glob(file_pattern))
-        total_files = len(matching_files)
-    else:
+    # Always calculate total_files and total_size_bytes if not provided
+    source_files = None
+    if file_count is not None:
         total_files = file_count
-        # print(f"[COPY_BATCH_DEBUG] Using provided file count: {total_files}")
-    
-    # Don't calculate total_size unless absolutely necessary
-    if total_size is None or total_size == 0:
-        total_size_bytes = 0  # Will be calculated during transfer
-        # print(f"[COPY_BATCH_DEBUG] Skipping size calculation - will get real-time size during copy")
     else:
+        import glob
+        source_files = glob.glob(os.path.join(source_dir, file_pattern))
+        total_files = len(source_files)
+
+    if total_size is not None:
         total_size_bytes = total_size
+    else:
+        # If we haven't already collected source_files, do it now
+        if source_files is None:
+            import glob
+            source_files = glob.glob(os.path.join(source_dir, file_pattern))
+        total_size_bytes = 0
+        for f in source_files:
+            try:
+                if os.path.isfile(f):
+                    total_size_bytes += os.path.getsize(f)
+            except Exception as e:
+                logger.warning(f"[COPY_BATCH_DEBUG] Could not get size for file {f}: {e}")
+        # print(f"[COPY_BATCH_DEBUG] Calculated total size: {total_size_bytes} bytes")
 
     def _send_status(type_suffix: str, status_str: str, message: str, **kwargs):
         if status_callback:
@@ -730,7 +702,27 @@ def copy_sequence_batch(source_dir: str, destination_dir: str, file_pattern: str
         # print(f"[SEQUENCE_COPY_DEBUG] Executing: {' '.join(cmd)}")
         
         start_time = time.time()
-        
+
+        # Construct robocopy command for batch sequence copy
+        cmd = [
+            "robocopy",
+            source_dir,
+            destination_dir,
+            file_pattern,
+            "/NJH", "/NJS", "/NC", "/NS", "/NP", "/NFL", "/NDL",  # Suppress headers, summary, class, size, progress, file/folder list
+            "/MT:32",  # Multi-threaded (adjust as needed)
+            "/R:1",    # Retry once on failure
+            "/W:1",    # Wait 1 second between retries
+            "/Z",      # Restartable mode
+            "/COPY:DAT"  # Copy Data, Attributes, Timestamps
+        ]
+        if overwrite_existing:
+            cmd.append("/IS")  # Overwrite (Include Same files)
+        else:
+            cmd.append("/XO")  # Skip older/existing files
+
+        # Log the robocopy command before execution
+        print(f"[SEQUENCE_COPY_DEBUG] Executing robocopy: {' '.join(cmd)}")
         # Start robocopy process at MAXIMUM speed (no output parsing overhead)
         process = subprocess.Popen(
             cmd, 
@@ -760,8 +752,7 @@ def copy_sequence_batch(source_dir: str, destination_dir: str, file_pattern: str
                     settings_manager = app_instance.settings_manager
                     THROTTLE_SECONDS = float(settings_manager.get_setting('performance', 'progress_update_interval', 0.5))
                 else:
-                    import os
-                    THROTTLE_SECONDS = float(os.environ.get('PROGRESS_UPDATE_INTERVAL', 0.5))
+                    THROTTLE_SECONDS = 0.5
             except Exception:
                 THROTTLE_SECONDS = 0.5
             last_update_time = 0
@@ -917,11 +908,34 @@ def copy_sequence_batch(source_dir: str, destination_dir: str, file_pattern: str
                             'operation': 'batch_copy'
                         }
                     })
-                
+                # Always send a final progress update with percent=100 for UI
+                _send_status('progress', 'progress', f'Copy complete: {total_files}/{total_files} (100%)',
+                             percent=100, files_copied=total_files, total_files=total_files,
+                             speed_mbps=0, speed_gbps=0, eta_str="Done")
                 return (True, success_message)
             else:
                 success_message = f"✅ No files to copy (empty or no matching pattern)"
                 print(f"[SEQUENCE_COPY_DEBUG] {success_message}")
+                # Always send a final progress update with percent=100 for UI
+                if status_callback:
+                    status_callback({
+                        'type': 'sequence_operation_warning',
+                        'data': {
+                            'status': 'warning',
+                            'message': success_message,
+                            'source_dir': source_dir,
+                            'transfer_id': transfer_id,
+                            'total_files': total_files,
+                            'files_skipped': 0,
+                            'speed_mbps': 0,
+                            'speed_gbps': 0,
+                            'percent': 100,
+                            'operation': 'batch_copy'
+                        }
+                    })
+                _send_status('progress', 'progress', f'Copy complete: {total_files}/{total_files} (100%)',
+                             percent=100, files_copied=total_files, total_files=total_files,
+                             speed_mbps=0, speed_gbps=0, eta_str="Done")
                 return (True, success_message)
                 
         elif process.returncode == 1:
@@ -950,7 +964,10 @@ def copy_sequence_batch(source_dir: str, destination_dir: str, file_pattern: str
                         'operation': 'batch_copy'
                     }
                 })
-            
+            # Always send a final progress update with percent=100 for UI
+            _send_status('progress', 'progress', f'Copy complete: {total_files}/{total_files} (100%)',
+                         percent=100, files_copied=total_files, total_files=total_files,
+                         speed_mbps=speed_mbps, speed_gbps=speed_gbps, eta_str="Done")
             return (True, success_message)
         else:
             # Error cases (return codes 4, 8, 16, etc.)
@@ -976,66 +993,141 @@ def copy_sequence_batch(source_dir: str, destination_dir: str, file_pattern: str
             return (False, error_message)
             
     except Exception as e:
-        # print(f"[SEQUENCE_COPY_ERROR] Batch copy failed: {e}")
-        return _xcopy_sequence_fallback(source_dir, destination_dir, file_pattern, status_callback, transfer_id, total_files, total_size_bytes)
+        print(f"[SEQUENCE_COPY_ERROR] Batch copy failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return _python_sequence_fallback(source_dir, destination_dir, file_pattern, status_callback, transfer_id, total_files, total_size_bytes)
 
-def _xcopy_sequence_fallback(source_dir: str, destination_dir: str, file_pattern: str,
+def _python_sequence_fallback(source_dir: str, destination_dir: str, file_pattern: str,
                             status_callback: Optional[Callable], transfer_id: Optional[str],
                             total_files: int, total_size_bytes: int) -> Tuple[bool, str]:
-    """Fallback to xcopy for batch sequence copying."""
+    """Fallback to Python shutil for batch sequence copying."""
+    
+    def _send_status(type_suffix: str, status_str: str, message: str, **kwargs):
+        if status_callback:
+            data = {
+                'status': status_str,
+                'message': message,
+                'source_dir': source_dir,
+                'transfer_id': transfer_id,
+                **kwargs
+            }
+            status_callback({'type': f'sequence_operation_{type_suffix}', 'data': data})
+    
     try:
-        print(f"[SEQUENCE_COPY_DEBUG] Using xcopy for batch sequence fallback")
+        print(f"[SEQUENCE_COPY_DEBUG] Using Python shutil for batch sequence fallback")
+        print(f"[SEQUENCE_COPY_DEBUG] Source dir: {source_dir}")
+        print(f"[SEQUENCE_COPY_DEBUG] Dest dir: {destination_dir}")
+        print(f"[SEQUENCE_COPY_DEBUG] Pattern: {file_pattern}")
         
-        # For xcopy, we need to copy all files matching pattern
-        # Use xcopy with recursive and overwrite flags
-        source_pattern = os.path.join(source_dir, file_pattern)
-        cmd = ['xcopy', f'"{source_pattern}"', f'"{destination_dir}\\"', '/Y', '/H']
+        # Get list of source files matching pattern
+        import glob
+        source_files = glob.glob(os.path.join(source_dir, file_pattern))
         
-        # print(f"[SEQUENCE_COPY_DEBUG] Executing xcopy: {' '.join(cmd)}")
+        if not source_files:
+            msg = f"No files found matching pattern: {file_pattern}"
+            print(f"[SEQUENCE_COPY_WARNING] {msg}")
+            _send_status('warning', 'warning', msg)
+            return True, msg
+        
+        print(f"[SEQUENCE_COPY_DEBUG] Found {len(source_files)} files to copy")
+        
+        # Send initial status
+        _send_status('progress', 'progress', f'Starting Python batch copy of {len(source_files)} files...', 
+                    total_files=len(source_files), total_size=total_size_bytes, percent=5)
         
         start_time = time.time()
-        result = subprocess.run(cmd, capture_output=True, text=True, check=False, shell=True)
+        copied_count = 0
+        failed_files = []
+        
+        for i, source_file in enumerate(source_files):
+            try:
+                filename = os.path.basename(source_file)
+                destination_file = os.path.join(destination_dir, filename)
+                
+                # Use shutil.copy2 to preserve metadata
+                shutil.copy2(source_file, destination_file)
+                copied_count += 1
+                
+                # Send progress updates every 10% or every 100 files
+                if i % max(1, len(source_files) // 10) == 0 or i % 100 == 0:
+                    progress_percent = min(95, (copied_count / len(source_files)) * 100)
+                    current_time = time.time()
+                    elapsed = current_time - start_time
+                    
+                    # Calculate real-time speed
+                    if elapsed > 0.001:
+                        estimated_bytes_copied = (copied_count / len(source_files)) * total_size_bytes
+                        speed_mbps = (estimated_bytes_copied / (1024 * 1024)) / elapsed
+                        speed_gbps = speed_mbps / 1000
+                        
+                        # Calculate ETA
+                        remaining_files = len(source_files) - copied_count
+                        if copied_count > 0:
+                            files_per_second = copied_count / elapsed
+                            eta_seconds = remaining_files / files_per_second if files_per_second > 0 else 0
+                            eta_str = time.strftime("%H:%M:%S", time.gmtime(eta_seconds)) if eta_seconds < 86400 else "Long time"
+                        else:
+                            eta_str = "Calculating..."
+                    else:
+                        speed_mbps = 0
+                        speed_gbps = 0
+                        eta_str = "Calculating..."
+                    
+                    # Send progress update
+                    _send_status('progress', 'progress', 
+                               f'Python copy: {copied_count}/{len(source_files)} ({progress_percent:.1f}%)', 
+                               percent=progress_percent,
+                               files_copied=copied_count,
+                               total_files=len(source_files),
+                               speed_mbps=round(speed_mbps, 2),
+                               speed_gbps=round(speed_gbps, 3),
+                               eta_str=eta_str)
+                
+            except Exception as file_error:
+                failed_files.append((source_file, str(file_error)))
+                print(f"[PYTHON_COPY_ERROR] Failed to copy {source_file}: {file_error}")
+        
         end_time = time.time()
+        duration = end_time - start_time
         
-        elapsed_time = end_time - start_time
-        speed_bps = total_size_bytes / elapsed_time if elapsed_time > 0.001 and total_size_bytes > 0 else 0
-        speed_mbps = speed_bps / (1024 * 1024)
-        speed_gbps = speed_bps * 8 / 1_000_000_000
+        # Calculate final speed
+        speed_mbps = (total_size_bytes / (1024 * 1024)) / duration if duration > 0.001 and total_size_bytes > 0 else 0
+        speed_gbps = speed_mbps / 1000
         
-        # print(f"[SEQUENCE_COPY_DEBUG] Batch xcopy completed in {elapsed_time:.2f}s")
-        # print(f"[SEQUENCE_COPY_DEBUG] Speed: {speed_mbps:.2f} MB/s ({speed_gbps:.2f} Gbps)")
-        # print(f"[SEQUENCE_COPY_DEBUG] Return code: {result.returncode}")
+        print(f"[SEQUENCE_COPY_DEBUG] Python batch copy completed in {duration:.2f}s")
+        print(f"[SEQUENCE_COPY_DEBUG] Copied: {copied_count}, Failed: {len(failed_files)}")
+        print(f"[SEQUENCE_COPY_DEBUG] Speed: {speed_mbps:.2f} MB/s ({speed_gbps:.2f} Gbps)")
         
-        if result.returncode == 0:
-            msg = f"✅ XCOPY BATCH SUCCESS! {total_files} files at {speed_mbps:.2f} MB/s ({speed_gbps:.2f} Gbps)"
-            # print(f"[SEQUENCE_COPY_DEBUG] {msg}")
+        if len(failed_files) == 0:
+            success_message = f"✅ PYTHON BATCH COPY SUCCESS! {copied_count} files at {speed_mbps:.2f} MB/s"
             
-            def _send_status(type_suffix: str, status_str: str, message: str, **kwargs):
-                if status_callback:
-                    data = {
-                        'status': status_str,
-                        'message': message,
-                        'source_dir': source_dir,
-                        'transfer_id': transfer_id,
-                        **kwargs
-                    }
-                    status_callback({'type': f'sequence_operation_{type_suffix}', 'data': data})
-            
-            _send_status('success', 'success', msg,
-                        total_files=total_files,
+            _send_status('success', 'success', success_message,
+                        total_files=copied_count,
+                        files_copied=copied_count,
+                        files_skipped=0,
                         speed_mbps=round(speed_mbps, 2),
                         speed_gbps=round(speed_gbps, 2),
-                        operation='batch_copy_xcopy')
-            return True, msg
+                        percent=100,
+                        operation='python_batch_copy')
+            
+            return True, success_message
         else:
-            msg = f"Xcopy batch failed with return code {result.returncode}"
-            # print(f"[SEQUENCE_COPY_ERROR] {msg}")
-            return False, msg
+            # Some files failed
+            error_message = f"Partial success: {copied_count}/{len(source_files)} files copied, {len(failed_files)} failed"
+            for failed_file, error in failed_files[:5]:  # Show first 5 errors
+                error_message += f"\n  - {os.path.basename(failed_file)}: {error}"
+            if len(failed_files) > 5:
+                error_message += f"\n  ... and {len(failed_files) - 5} more errors"
+            
+            _send_status('error', 'error', error_message, operation='python_batch_copy')
+            return False, error_message
             
     except Exception as e:
-        msg = f"Batch copy fallback failed: {e}"
-        # print(f"[SEQUENCE_COPY_ERROR] {msg}")
-        return False, msg
+        error_message = f"Python batch copy fallback failed: {e}"
+        print(f"[SEQUENCE_COPY_ERROR] {error_message}")
+        _send_status('error', 'error', error_message, operation='python_batch_copy')
+        return False, error_message
 
 def move_sequence_batch(source_dir: str, destination_dir: str, file_pattern: str,
                        status_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
@@ -1274,8 +1366,8 @@ def _instant_filesystem_move(source_files: list, destination_dir: str, total_fil
         return (False, error_message)
 
 def _robocopy_cross_drive_move(source_dir: str, destination_dir: str, file_pattern: str,
-                              total_files: int, total_size_bytes: int, status_callback: Optional[Callable],
-                              transfer_id: Optional[str], _send_status: Callable) -> Tuple[bool, str]:
+                               total_files: int, total_size_bytes: int, status_callback: Optional[Callable],
+                               transfer_id: Optional[str], _send_status: Callable) -> Tuple[bool, str]:
     """
     Performs cross-drive move using robocopy (copy + delete).
     This is the slower method used when source and destination are on different drives.
@@ -1461,9 +1553,3 @@ def _robocopy_cross_drive_move(source_dir: str, destination_dir: str, file_patte
         # print(f"[ROBOCOPY_MOVE_ERROR] {error_message}")
         _send_status('error', 'error', error_message, operation='cross_drive_move')
         return (False, error_message)
-
-# TODO:
-# - For move_item with FileTransfer: implement as copy_item then delete source. Ensure atomicity or recovery.
-# - Multi-file support: A manager class to handle a queue of FileTransfer instances.
-# - Auto-resume: Persist transfer state (e.g., .part file and metadata) and check on startup.
-#   FileTransfer would need to support starting from an offset.

@@ -38,12 +38,29 @@ class SettingsManager:
                 "scan_threads": 8,  # Balanced for 10GbE scanning
                 "copy_threads": 16,  # Balanced for 10GbE copying - good performance without overload
                 "ffplay_path": "",  # Path to ffplay executable
-                "scan_on_startup": False  # Added scan_on_startup to ui_state defaults
+                "scan_on_startup": False,  # Added scan_on_startup to ui_state defaults
+                "preferred_exr_viewer": "auto",  # auto, mrv2, djv, rv, nuke_player, system
+                "vlc_enabled": True,  # Whether VLC playback is enabled
+                "default_frame_rate": 24,  # Default frame rate for sequence playback
+                "default_window_size": "1280x720",  # Default window size for media players
+                "enable_loop": False  # Whether to loop playback by default
             },
             "performance": {
                 "enable_multithreading": True,
                 "max_concurrent_scans": 8,
-                "max_concurrent_copies": 16  # Balanced for good 10GbE performance
+                "max_concurrent_copies": 16,  # Balanced for good 10GbE performance
+                "batch_copy_threads": 32,  # User-configurable threads for Robocopy/rsync
+                "progress_update_interval": 0.5,  # How often to update progress (seconds)
+                "memory_limit_mb": 2048,  # Memory limit for large operations
+                "enable_file_caching": True  # Whether to enable file operation caching
+            },
+            "media": {
+                "ffplay_path": "",  # Path to ffplay executable
+                "preferred_exr_viewer": "auto",  # auto, mrv2, djv, rv, nuke_player, system
+                "vlc_enabled": True,  # Whether VLC playback is enabled
+                "default_frame_rate": 24,  # Default frame rate for sequence playback
+                "default_window_size": "1280x720",  # Default window size for media players
+                "enable_loop": False  # Whether to loop playback by default
             }
         }
 

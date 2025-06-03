@@ -111,6 +111,9 @@ class CopyMoveProgressWindow(QDialog):
             total_files (int): Grand total files to copy (across all batches)
         """
         percent = int(100 * files_copied / total_files) if total_files else 0
+        if percent >= 100 or files_copied >= total_files:
+            percent = 100
+            print("[DEBUG] Forcing progress bar to 100% (update_aggregate_progress)")
         self.progress_bar.setValue(percent)
         self.label_files.setText(f"Files: {files_copied} / {total_files}")
         # Optionally, clear or simplify other labels in aggregate mode
@@ -188,6 +191,8 @@ class CopyMoveProgressWindow(QDialog):
         self.pause_resume_requested.emit()
 
     def closeEvent(self, event):
+        print("[DEBUG] CopyMoveProgressWindow: closeEvent called, closing window.")
+        self.progress_bar.setValue(100)
         self.timer.stop()
         super().closeEvent(event)
 
